@@ -1,0 +1,42 @@
+<div id="pk-detail">
+{% if pk %}
+  <h4>聚合配置 PK：<span class="mono">{{ pk.a.name }}</span>
+    vs <span class="mono">{{ pk.b.name }}</span></h4>
+  {% include "partials/pk_detail_body.html" %}
+
+  <h5>变体差异 PK 矩阵</h5>
+  <p class="muted small">行 = A 的变体，列 = B 的变体；点击单元格直接查看该变体对的 PK 图表
+    （会替换上方图表）。</p>
+  <div class="table-wrap">
+  <table class="pk-matrix">
+    <thead>
+      <tr><th>变体 A ＼ 变体 B</th>
+        {% for vb in pk.variants_b %}<th class="mono">{{ vb.name }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in variant_rows %}
+      <tr>
+        <th class="mono">{{ row.variant.name }}</th>
+        {% for cell in row.cells %}
+          <td class="cell">
+            {% if cell %}
+            <a href="#" class="pk-cell"
+               hx-get="/partials/scenarios/{{ scenario_id }}/pk?pk_a={{ row.variant.id }}&pk_b={{ cell.b.id }}"
+               hx-target="#pk-detail" hx-swap="outerHTML">
+              {% if cell.has_pk %}A胜 {{ cell.wins }} · B胜 {{ cell.losses }} · 平 {{ cell.ties }}
+                <span class="muted small">（{{ cell.compared_count }}）</span>
+              {% else %}<span class="muted">未 PK</span>{% endif %}
+            </a>
+            {% else %}—{% endif %}
+          </td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+{% else %}
+  <p class="empty">未找到对应的聚合配置。</p>
+{% endif %}
+</div>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}perf-viewer{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
+  <script src="/static/vendor/echarts.min.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">perf-viewer</a>
+  <nav>
+    <a href="/">模型</a>
+    <a href="/catalog">目录管理</a>
+    <a href="/docs">API</a>
+  </nav>
+  <div class="token-box">
+    <input id="pv-token" type="password" placeholder="写操作 token" autocomplete="off">
+    <button id="pv-token-save" type="button">保存</button>
+    <span id="pv-token-state"></span>
+  </div>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer class="foot">perf-viewer · 推理压测结果汇总 · 浏览免认证，写操作需 token</footer>
+</body>
+</html>

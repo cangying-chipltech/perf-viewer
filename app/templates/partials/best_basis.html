@@ -1,0 +1,93 @@
+{% if best_view %}
+<h2>{% if best_view.undetermined %}为什么是候选 · 评分依据（仅已 PK 配置）{% else %}为什么是最佳 · 评分依据{% endif %}</h2>
+<p class="muted small">
+  基于本场景配置集合的横向对比：配置总分 = 对各对手 × case 的 case_score 按 case weight 加权平均；
+  case_score = Σ(metric_score × metric_weight) / Σmetric_weight；
+  metric_score = w_same × 同节点胜率 + w_adj × 校正置信度 × 跨节点校正胜率 + w_best × 最优值胜率
+  （w_same={{ comp.scoring.w_same }}，w_adj={{ comp.scoring.w_adj }}，w_best={{ comp.scoring.w_best }}，ε={{ comp.scoring.epsilon }}，相对差 ≤ε 记平局 0.5）。
+  无共同节点时，用同配置跨节点用例估计的节点倍率做校正比较，并按配对证据量打折；无校正证据时仅计最优值部分。
+  得分 &gt;0.5 表示占优。仅纳入 valid=1 且 excluded=0 的运行。
+</p>
+{% if best_view.origin == 'overridden' and scenario.best_reason %}
+  <p class="notice">人工改判理由：{{ scenario.best_reason }}</p>
+{% endif %}
+{% for b in basis %}
+<details class="suite-block" open>
+  <summary><strong class="mono">{{ b.suite.key }}</strong>
+    {% if b.focus_rank %}
+      — 排名 #{{ b.focus_rank.rank }} · 总分 {{ b.focus_rank.total_score | fmt }}
+      · 参与 {{ b.focus_rank.cases_compared }} cases · {{ b.focus_rank.n_runs }} 有效 runs
+    {% endif %}
+  </summary>
+  {% for note in b.insufficient %}<p class="notice">{{ note }}</p>{% endfor %}
+  {% if b.node_effects %}
+  <details class="basis-node-effects">
+    <summary>节点性能校正因子（同配置×case 跨节点估计，倍率 &gt;1 表示该节点相对更慢/更低）</summary>
+    <div class="table-wrap">
+    <table class="basis">
+      <thead><tr><th>指标</th><th>节点倍率</th><th>配对证据 / 置信度</th></tr></thead>
+      <tbody>
+      {% for metric, eff in b.node_effects.items() %}
+        {% if eff.known %}
+        <tr>
+          <td class="metric-name">{{ metric }}</td>
+          <td>{% for node in eff.known %}<span class="node-cmp">{{ node }} ×{{ '%.3f'|format(eff.factor[node]) }}</span> {% endfor %}</td>
+          <td class="small">{% for pair, count in eff.pair_counts.items() %}{{ pair }}: n={{ count }} · conf={{ '%.2f'|format(eff.pair_confidence[pair]) }}；{% endfor %}</td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </details>
+  {% endif %}
+  {% if not b.opponents %}
+    <p class="empty">无对比对手（仅一套配置有数据，或配置间无共同 case/指标）：评分不适用，
+      当前展示为现有数据的唯一/推荐选择，待补充对比配置后自动产生横向评估。</p>
+  {% endif %}
+  {% for opp in b.opponents %}
+  <details class="basis-opponent" open>
+    <summary>vs <span class="mono">{{ opp.config.name }}</span>
+      — 加权 case 得分 <strong>{{ opp.avg_score | fmt }}</strong>（{{ opp.cases | length }} cases）</summary>
+    {% for c in opp.cases %}
+    <h4><span class="mono">{{ c.case.case_key }}</span>
+      <span class="muted small">{{ c.case.description or '' }}</span>
+      <span class="badge {{ 'confirmed' if c.mark == 'win' else ('overridden' if c.mark == 'loss' else '') }}">case 得分 {{ c.case_score | fmt }}</span>
+      <span class="muted small">weight={{ c.case.weight }}</span></h4>
+    <div class="table-wrap">
+    <table class="basis">
+      <thead><tr>
+        <th>指标</th><th>节点胜率</th><th>逐节点代表值（本配置 vs 对手）</th>
+        <th>最优值（本配置 vs 对手）</th><th>metric_score</th><th>weight</th>
+      </tr></thead>
+      <tbody>
+      {% for m in c.metrics %}
+        <tr>
+          <td class="metric-name">{{ m.def.display_name }}
+            <span class="muted small">{{ m.key }} · {{ '越低越好' if m.def.direction == 'lower' else '越高越好' }}</span></td>
+          <td>{% if m.node_mode == 'same' %}{{ m.win_rate_same | fmt }}<span class="muted small">（{{ m.nodes | length }} 共同节点）</span>
+              {% elif m.node_mode == 'adjusted' %}{{ m.win_rate_adj | fmt }}<span class="muted small">（跨节点校正，置信度 {{ m.node_confidence | fmt }}）</span>
+              {% else %}<span class="muted">—（无共同节点/无校正证据）</span>{% endif %}</td>
+          <td>{% if m.node_mode == 'same' %}{% for n in m.nodes %}<span class="node-cmp {{ n.mark }}">{{ n.node }}：{{ n.focus | fmt }} vs {{ n.other | fmt }}
+                {{ '✓' if n.mark == 'win' else ('✗' if n.mark == 'loss' else '=') }}</span>{% endfor %}
+              {% else %}<span class="muted small">节点倍率来自同配置跨节点用例；校正后对比：</span>
+              {% for n in m.adj_nodes %}<span class="node-cmp {{ n.mark }}">{{ n.node_a }} ↔ {{ n.node_b }}：{{ n.focus | fmt }} vs {{ n.other | fmt }}（校正后，置信度 {{ n.confidence | fmt }}）{{ '✓' if n.mark == 'win' else ('✗' if n.mark == 'loss' else '=') }}</span>
+              {% else %}<span class="muted">—</span>{% endfor %}{% endif %}</td>
+          <td><span class="node-cmp {{ m.best_mark }}">{{ m.focus_best.value | fmt }} vs {{ m.other_best.value | fmt }}
+                {{ '✓' if m.best_mark == 'win' else ('✗' if m.best_mark == 'loss' else '=') }}</span>
+            <span class="muted small">本配置来源
+              {% for rid in m.focus_best.run_ids %}<a href="/runs/{{ rid }}">#{{ rid }}</a> {% endfor %}
+              · 对手来源 {% for rid in m.other_best.run_ids %}<a href="/runs/{{ rid }}">#{{ rid }}</a> {% endfor %}</span></td>
+          <td>{{ m.metric_score | fmt }}</td>
+          <td>{{ m.weight }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% endfor %}
+  </details>
+  {% endfor %}
+</details>
+{% endfor %}
+{% endif %}

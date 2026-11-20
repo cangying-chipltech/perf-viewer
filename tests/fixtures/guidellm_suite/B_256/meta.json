@@ -1,0 +1,1 @@
+{"case_id": "B_256", "group": "B", "concurrency": 1, "requests": 10, "prefix_tokens": 180000, "suffix_tokens": 20000, "input_tokens": 200000, "output_tokens": 256, "warmup": 1, "thinking_effort": "-", "ignore_eos": "", "prompt_jsonl": "-", "seed": 42, "started_at": "2026-11-17T15:40:00+08:00", "worker_label": "node-6"}

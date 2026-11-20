@@ -1,0 +1,1 @@
+{"case_id": "A_256", "group": "A", "concurrency": 1, "requests": 3, "prefix_tokens": 0, "suffix_tokens": 200000, "input_tokens": 200000, "output_tokens": 256, "warmup": 0, "seed": 42, "started_at": "2026-11-17T15:34:09+08:00"}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}run #{{ run.id }} · perf-viewer{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/">模型</a> / <a href="{{ model_url(run.model.name) }}">{{ run.model.name }}</a> / run #{{ run.id }}</p>
+<h1>run #{{ run.id }}
+  {% if run.valid and not run.excluded %}<span class="badge valid">有效</span>{% endif %}
+  {% if not run.valid %}<span class="badge invalid">无效</span>{% endif %}
+  {% if run.excluded %}<span class="badge excluded">已剔除</span>{% endif %}
+</h1>
+
+<table class="kv">
+  <tr><th>配置</th><td class="mono">{{ run.config.name }} <span class="muted">({{ run.config.fingerprint[:12] }})</span></td></tr>
+  <tr><th>节点</th><td class="mono">{{ run.node.label }}</td></tr>
+  <tr><th>suite</th><td>{{ run.suite.key }}</td></tr>
+  <tr><th>backend</th><td>{{ run.backend }}</td></tr>
+  <tr><th>时间</th><td>{{ run.started_at or '—' }} → {{ run.ended_at or '—' }}</td></tr>
+  <tr><th>worker</th><td>{{ run.worker_label or '—' }}</td></tr>
+  <tr><th>batch</th><td>{{ run.batch_id or '—' }}</td></tr>
+</table>
+
+<form data-api="/api/runs/{{ run.id }}/exclude" data-method="POST" class="inline-form">
+  {% if run.excluded %}
+    <input type="hidden" name="excluded" value="false">
+    <button type="submit">恢复参与对比</button>
+  {% else %}
+    <input type="hidden" name="excluded" value="true">
+    <input name="reason" placeholder="剔除理由（可选）" size="30">
+    <button type="submit">剔除该运行</button>
+  {% endif %}
+  <span class="muted small">剔除后不参与代表值与评分</span>
+</form>
+
+<h2>case 指标</h2>
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>case</th><th>n</th><th>err</th><th>in_tok</th><th>out_tok</th>
+      {% for key, md in metric_defs.items() %}<th title="{{ md.key }}">{{ md.display_name }}<br><span class="muted small">{{ md.unit or '' }}</span></th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for cr in run.case_results %}
+    <tr>
+      <td class="mono" title="{{ cr.description or '' }}">{{ cr.case_key }}</td>
+      <td>{{ cr.n_measured if cr.n_measured is not none else '—' }}</td>
+      <td>{{ cr.err_count if cr.err_count is not none else '—' }}</td>
+      <td>{{ cr.in_tok if cr.in_tok is not none else '—' }}</td>
+      <td>{{ cr.out_tok if cr.out_tok is not none else '—' }}</td>
+      {% for key in metric_defs %}
+        <td>{{ cr.metrics.get(key) | fmt }}</td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<h2>产物</h2>
+{% if not artifacts_render %}<p class="muted">无产物。</p>{% endif %}
+{% for item in artifacts_render %}
+  <div class="artifact">
+    {% if item.art.kind == 'md' and item.html %}
+      <details class="artifact-md" open>
+        <summary>{{ item.art.title }} <a href="/api/artifacts/{{ item.art.id }}?download=true">下载</a></summary>
+        <div class="md-body">{{ item.html | safe }}</div>
+      </details>
+    {% elif item.art.kind == 'png' and item.exists %}
+      <details class="artifact-md" open>
+        <summary>{{ item.art.title }}</summary>
+        <img class="artifact-img" src="/api/artifacts/{{ item.art.id }}" alt="{{ item.art.title }}">
+      </details>
+    {% else %}
+      <p><a href="/api/artifacts/{{ item.art.id }}?download=true">{{ item.art.title }}</a>
+        <span class="badge">{{ item.art.kind }}</span>
+        {% if not item.exists %}<span class="badge invalid">文件缺失</span>{% endif %}</p>
+    {% endif %}
+  </div>
+{% endfor %}
+
+<h2>manifest</h2>
+<pre class="manifest">{{ manifest_pretty }}</pre>
+{% endblock %}

@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}目录管理 · perf-viewer{% endblock %}
+{% block content %}
+<h1>目录管理</h1>
+<p class="muted">场景 / 测试集合 / case / 模型 / 节点均可编辑；所有写操作需要 token（右上角保存）。</p>
+
+<h2>场景</h2>
+<table>
+  <thead><tr><th>模型</th><th>名称</th><th>suite</th><th>评分参数</th><th>编辑</th></tr></thead>
+  <tbody>
+  {% for s in scenarios %}
+    <tr>
+      <td>{{ s.model_id }}</td>
+      <td><a href="/models/{{ s.model_id }}/scenarios/{{ s.id }}">{{ s.name }}</a></td>
+      <td>{% for k in s.suite_keys %}<span class="tag">{{ k }}</span>{% endfor %}</td>
+      <td><pre class="params">{{ s.scoring | tojson }}</pre></td>
+      <td>
+        <form data-api="/api/catalog/scenarios/{{ s.id }}" data-method="PATCH">
+          <input name="name" value="{{ s.name }}" size="14">
+          <input name="description" value="{{ s.description or '' }}" size="20" placeholder="描述">
+          <input name="suite_keys" data-list="1" value="{{ s.suite_keys | join(',') }}" size="18" placeholder="suite keys，逗号分隔">
+          <textarea name="scoring" data-json="1" rows="3" cols="26">{{ s.scoring | tojson }}</textarea>
+          <button type="submit">保存</button>
+        </form>
+        <form data-api="/api/catalog/scenarios/{{ s.id }}" data-method="DELETE" data-confirm="删除场景？">
+          <button type="submit" class="danger">删除</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<h3>新建场景</h3>
+<form data-api="/api/catalog/scenarios" data-method="POST" class="inline-form">
+  <select name="model_name">
+    {% for m in models %}<option value="{{ m.name }}">{{ m.name }}</option>{% endfor %}
+  </select>
+  <input name="name" placeholder="场景名" required>
+  <input name="description" placeholder="描述" size="24">
+  <input name="suite_keys" data-list="1" placeholder="suite keys，逗号分隔" size="22">
+  <button type="submit">创建</button>
+</form>
+
+<h2>测试集合与 case</h2>
+{% for su in suites %}
+<details class="suite-block" open>
+  <summary><strong class="mono">{{ su.key }}</strong> — {{ su.name }}
+    <span class="muted">（{{ su.cases | length }} cases）</span></summary>
+  <p class="muted">{{ su.description or '' }}</p>
+  <table>
+    <thead><tr><th>case_key</th><th>描述</th><th>weight</th><th>params</th><th>编辑</th></tr></thead>
+    <tbody>
+    {% for c in su.cases %}
+      <tr>
+        <td class="mono">{{ c.case_key }}</td>
+        <td>{{ c.description or '' }}</td>
+        <td>{{ c.weight }}</td>
+        <td><pre class="params">{{ c.params | tojson }}</pre></td>
+        <td>
+          <form data-api="/api/catalog/cases/{{ c.id }}" data-method="PATCH">
+            <input type="hidden" name="case_key" value="{{ c.case_key }}">
+            <input name="description" value="{{ c.description or '' }}" size="18">
+            <input name="weight" type="number" step="0.1" value="{{ c.weight }}" size="6">
+            <input name="sort_order" type="number" value="{{ c.sort_order }}" size="6">
+            <textarea name="params" data-json="1" rows="2" cols="24">{{ c.params | tojson }}</textarea>
+            <button type="submit">保存</button>
+          </form>
+          <form data-api="/api/catalog/cases/{{ c.id }}" data-method="DELETE" data-confirm="删除 case？">
+            <button type="submit" class="danger">删除</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <form data-api="/api/catalog/suites/{{ su.id }}/cases" data-method="POST" class="inline-form">
+    <input name="case_key" placeholder="新 case_key" required>
+    <input name="description" placeholder="描述" size="20">
+    <input name="weight" type="number" step="0.1" value="1" size="6">
+    <textarea name="params" data-json="1" rows="1" cols="24" placeholder="params JSON">{}</textarea>
+    <button type="submit">添加 case</button>
+  </form>
+</details>
+{% endfor %}
+<h3>新建测试集合</h3>
+<form data-api="/api/catalog/suites" data-method="POST" class="inline-form">
+  <input name="key" placeholder="suite key" required>
+  <input name="name" placeholder="名称" size="18">
+  <input name="description" placeholder="描述" size="24">
+  <button type="submit">创建</button>
+</form>
+
+<h2>配置集</h2>
+{% for c in configs %}
+<details class="suite-block">
+  <summary><strong class="mono">{{ c.name }}</strong>
+    <span class="muted">{{ c.model_name or c.model_id }} · 指纹 {{ c.fingerprint[:12] }}</span>
+    {% if c.deploy.docker_cmd or c.deploy.env or c.deploy.serve_cmd %}<span class="badge valid">部署已录入</span>
+    {% else %}<span class="badge">部署未录入</span>{% endif %}</summary>
+  <pre class="params">{{ c.params | tojson(indent=1) }}</pre>
+  <form data-api="/api/catalog/configs/{{ c.id }}" data-method="PATCH" class="inline-form">
+    <input name="name" value="{{ c.name }}" size="28">
+    <input name="notes" value="{{ c.notes or '' }}" placeholder="备注" size="24">
+    <button type="submit">重命名 / 备注</button>
+  </form>
+  <form data-api="/api/catalog/configs/{{ c.id }}" data-method="PATCH" data-deploy-form="1">
+    <input type="hidden" name="name" value="{{ c.name }}">
+    <input type="hidden" name="notes" value="{{ c.notes or '' }}">
+    <label>Docker 启动命令
+      <textarea name="docker_cmd" rows="4" cols="100" class="mono">{{ c.deploy.docker_cmd or '' }}</textarea></label>
+    <label>模型环境变量（每行 K=V，或空格分隔）
+      <textarea name="env_text" rows="4" cols="100" class="mono">{% for k, v in (c.deploy.env or {}).items() %}{{ k }}={{ v }}
+{% endfor %}</textarea></label>
+    <label>模型启动命令
+      <textarea name="serve_cmd" rows="4" cols="100" class="mono">{{ c.deploy.serve_cmd or '' }}</textarea></label>
+    <label>来源备注
+      <input name="source" value="{{ c.deploy.source or '' }}" size="60" placeholder="工作流 / 执行记录 / 报告出处"></label>
+    <button type="submit">保存部署信息</button>
+    <span class="muted small">敏感值（api_key/token 等）入库自动脱敏；不影响配置指纹与对比。</span>
+  </form>
+</details>
+{% endfor %}
+
+{% if configs | length > 1 %}
+<h3>合并配置（指纹误拆分时）</h3>
+<form data-api="/api/configs/merge" data-method="POST" class="inline-form">
+  <label>源 <select name="source_id">
+    {% for c in configs %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+  </select></label>
+  <label>并入 <select name="target_id">
+    {% for c in configs %}<option value="{{ c.id }}">{{ c.name }}</option>{% endfor %}
+  </select></label>
+  <button type="submit">合并</button>
+  <span class="muted">源配置的 runs 将并入目标，源配置删除</span>
+</form>
+{% endif %}
+
+<h2>模型</h2>
+<table>
+  <thead><tr><th>名称</th><th>别名</th><th>备注</th></tr></thead>
+  <tbody>
+  {% for m in models %}
+    <tr><td class="mono">{{ m.name }}</td><td>{{ m.aliases | join(', ') }}</td><td>{{ m.notes or '' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form data-api="/api/catalog/models" data-method="POST" class="inline-form">
+  <input name="name" placeholder="served name" required>
+  <input name="aliases" data-list="1" placeholder="别名，逗号分隔" size="22">
+  <input name="notes" placeholder="备注" size="18">
+  <button type="submit">登记模型</button>
+</form>
+
+<h2>节点</h2>
+<p>{% for n in nodes %}<span class="tag mono">{{ n.label }}</span>{% endfor %}</p>
+<form data-api="/api/catalog/nodes" data-method="POST" class="inline-form">
+  <input name="label" placeholder="hostname / IP" required>
+  <input name="description" placeholder="描述" size="24">
+  <button type="submit">登记节点</button>
+</form>
+
+<h2>指标定义（固定种子）</h2>
+<table>
+  <thead><tr><th>key</th><th>名称</th><th>单位</th><th>方向</th></tr></thead>
+  <tbody>
+  {% for md in metric_defs %}
+    <tr><td class="mono">{{ md.key }}</td><td>{{ md.display_name }}</td>
+      <td>{{ md.unit or '' }}</td><td>{{ '越低越好' if md.direction == 'lower' else '越高越好' }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<p class="muted small">metric_weights / ε / w_same / w_adj / w_best / node_evidence_full 在场景的 scoring JSON 中编辑。</p>
+{% endblock %}

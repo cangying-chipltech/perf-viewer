@@ -1,0 +1,17 @@
+{
+  "benchmarks": [
+    {
+      "metrics": {
+        "request_totals": {"total": 3, "successful": 2, "errored": 1, "incomplete": 0},
+        "request_latency": {
+          "successful": {"mean": 305.54, "total": 611.08, "count": 2, "percentiles": {"p99": 306.13}}
+        },
+        "time_to_first_token_ms": {
+          "successful": {"mean": 295456.0, "count": 2, "percentiles": {"p99": 295907.0}}
+        },
+        "output_tokens_count": {"successful": {"total": 512, "count": 2}},
+        "prompt_tokens_count": {"successful": {"total": 400024, "count": 2}}
+      }
+    }
+  ]
+}

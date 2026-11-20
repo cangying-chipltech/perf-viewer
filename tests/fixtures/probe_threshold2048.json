@@ -1,0 +1,32 @@
+{
+  "ok": true,
+  "complete": true,
+  "error": null,
+  "base_url": "http://192.168.80.4:8000/v1",
+  "model": "cltech/glm53",
+  "worker_label": "wenling-5",
+  "started_at": "2026-11-17T18:47:50+08:00",
+  "ended_at": "2026-11-17T19:25:07+08:00",
+  "response_id": "chatcmpl-a1cf63a0ae63a848",
+  "latency_s": 2236.47,
+  "ttft_s": 2236.439,
+  "input_target_tokens": 1000000,
+  "output_limit_tokens": 1,
+  "prompt_tokens": 1000026,
+  "completion_tokens": 1,
+  "cached_tokens": 0,
+  "finish_reason": "length",
+  "output_tok_s": 0.0,
+  "content_chunks": 1,
+  "server_generation_tokens_global_delta": 1,
+  "peak_running": 0,
+  "peak_waiting": 0,
+  "usage": {
+    "prompt_tokens": 1000026,
+    "total_tokens": 1000027,
+    "completion_tokens": 1,
+    "prompt_tokens_details": {
+      "cached_tokens": 0
+    }
+  }
+}

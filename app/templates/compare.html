@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% block title %}{{ scenario.name }} · 对比 · {{ model.name }} · perf-viewer{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/">模型</a> / <a href="{{ model_url(model.name) }}">{{ model.name }}</a> /
+  <a href="{{ model_url(model.name) }}/scenarios/{{ scenario.id }}">{{ scenario.name }}</a> / 下钻对比</p>
+<h1>{{ scenario.name }} · 下钻对比</h1>
+<p class="drill-nav">
+  <a class="link-btn" href="{{ model_url(model.name) }}/scenarios/{{ scenario.id }}">← 返回场景（最佳配置与部署信息）</a>
+</p>
+
+<h2 id="aggregate-pk">核心配置（聚合）PK</h2>
+{% if group_matrix and group_matrix.groups | length > 1 %}
+<h3>聚合 PK 矩阵（点击展开变体差异）</h3>
+<div class="table-wrap">
+<table class="pk-matrix">
+  <thead>
+    <tr><th>配置 A ＼ 配置 B</th>
+      {% for g in group_matrix.groups %}
+      <th class="mono">
+        {% if g.configs | length > 1 %}
+        <a href="#" class="pk-cell" title="查看该聚合配置的变体 PK 矩阵"
+           hx-get="/partials/scenarios/{{ scenario.id }}/pk_group_inner?g={{ g.id }}"
+           hx-target="#pk-detail" hx-swap="outerHTML">{{ g.label }}<span class="muted small">（{{ g.configs | length }} 变体）</span></a>
+        {% else %}{{ g.label }}{% endif %}
+      </th>
+      {% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for row in group_matrix.rows %}
+    {% set ri = loop.index0 %}
+    <tr>
+      <th class="mono">
+        {% if row.group.configs | length > 1 %}
+        <a href="#" class="pk-cell" title="查看该聚合配置的变体 PK 矩阵"
+           hx-get="/partials/scenarios/{{ scenario.id }}/pk_group_inner?g={{ row.group.id }}"
+           hx-target="#pk-detail" hx-swap="outerHTML">{{ row.group.label }}<span class="muted small">（{{ row.group.configs | length }} 变体）</span></a>
+        {% else %}{{ row.group.label }}{% endif %}
+      </th>
+      {% for cell in row.cells %}
+        {% if cell.lower %}
+          <td class="cell stair-empty"></td>
+        {% elif cell.self %}
+          <td class="cell self">—</td>
+        {% else %}
+          <td class="cell">
+            <a href="#" class="pk-cell"
+               hx-get="/partials/scenarios/{{ scenario.id }}/pk_group?ga={{ row.group.id }}&gb={{ cell.group_id }}"
+               hx-target="#pk-detail" hx-swap="outerHTML">
+              {% if cell.has_pk %}A胜 {{ cell.wins }} · B胜 {{ cell.losses }} · 平 {{ cell.ties }}
+                <span class="muted small">（{{ cell.compared_count }} 个测试项）</span>
+              {% else %}<span class="muted">未 PK</span>{% endif %}
+            </a>
+          </td>
+        {% endif %}
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+
+{% if group_pk %}
+<h3>PK 图表（默认聚合对）</h3>
+{% with pk = group_pk, pk_data = group_pk_data %}
+  {% include "partials/pk_detail.html" %}
+{% endwith %}
+{% endif %}
+
+<h2>参数对比</h2>
+<p class="muted small">参数合并自：配置声明、serve 启动命令解析（短参数归一，如 -tp = tensor_parallel_size）、
+  Docker 容器启动参数、模型环境变量。默认只展示所选配置间的差异项；配置较多时可勾选参与对比的配置。</p>
+<form method="get" action="" class="filter-form">
+  <label>展示
+    <select name="diff">
+      <option value="1" {% if compare.diff %}selected{% endif %}>只展示差异项</option>
+      <option value="0" {% if not compare.diff %}selected{% endif %}>全部参数</option>
+    </select>
+  </label>
+  <span class="muted small">对比配置：</span>
+  {% for c in compare.selectable %}
+    <label class="chip"><input type="checkbox" name="configs" value="{{ c.id }}"
+      {% if c.id in compare.selected_ids %}checked{% endif %}> {{ c.name }}</label>
+  {% endfor %}
+  <button type="submit">应用</button>
+</form>
+
+{% if compare.configs %}
+  {% if compare.params %}
+  <div class="table-wrap">
+  <table class="compare-configs params-matrix">
+    <thead><tr><th>来源</th><th>参数</th>{% for c in compare.configs %}
+      <th class="mono">{{ c.name }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for row in compare.params %}
+      <tr><td class="source-cell small muted">{{ row.source }}</td><th class="mono">{{ row.key }}</th>{% for c in compare.configs %}
+        <td class="mono" title="{{ row.val[c.id] | tojson }}">{{ row.val[c.id] | short }}</td>{% endfor %}</tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% elif compare.diff %}
+    <p class="empty">所选配置参数一致（无差异项）。将上方切换为「全部参数」可查看完整参数矩阵。</p>
+  {% else %}
+    <p class="empty">暂无可展示参数。</p>
+  {% endif %}
+{% else %}
+  <p class="empty">暂无可对比配置。</p>
+{% endif %}
+
+<h2>部署信息对比</h2>
+<p class="muted small">命令与环境变量默认折叠，展开查看所选配置的完整部署信息。</p>
+{% if compare.configs %}
+<div class="table-wrap">
+<table class="compare-configs">
+  <thead><tr><th>项目</th>{% for c in compare.configs %}
+    <th class="mono">{{ c.name }}</th>{% endfor %}</tr></thead>
+  <tbody>
+    <tr class="deploy-cmp-row"><th>Docker 启动命令</th>{% for c in compare.configs %}
+      <td>{% if c.deploy.docker_cmd %}<details class="cmd-details"><summary>展开</summary><pre class="cmd">{{ c.deploy.docker_cmd }}</pre></details>{% else %}—{% endif %}</td>{% endfor %}</tr>
+    <tr class="deploy-cmp-row"><th>模型启动命令</th>{% for c in compare.configs %}
+      <td>{% if c.deploy.serve_cmd %}<details class="cmd-details"><summary>展开</summary><pre class="cmd">{{ c.deploy.serve_cmd }}</pre></details>{% else %}—{% endif %}</td>{% endfor %}</tr>
+    <tr class="deploy-cmp-row"><th>模型环境变量</th>{% for c in compare.configs %}
+      <td>{% if c.deploy.env %}<details class="cmd-details"><summary>展开</summary><pre class="cmd">{% for k, v in c.deploy.env.items() %}{{ k }}={{ v }}
+{% endfor %}</pre></details>{% else %}—{% endif %}</td>{% endfor %}</tr>
+    {% if compare.has_extra_cmds %}
+    <tr class="deploy-cmp-row"><th>额外启动命令</th>{% for c in compare.configs %}
+      <td>{% if c.deploy.extra_cmds %}{% for item in c.deploy.extra_cmds %}
+        <details class="cmd-details"><summary>{{ item.title or '命令' }}</summary>
+          <pre class="cmd">{{ item.cmd }}</pre></details>
+      {% endfor %}{% else %}—{% endif %}</td>{% endfor %}</tr>
+    {% endif %}
+    <tr><th>部署来源</th>{% for c in compare.configs %}
+      <td class="small muted">{{ c.deploy.source or '—' }}</td>{% endfor %}</tr>
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">暂无可对比配置。</p>
+{% endif %}
+
+<h2>最佳配置确认 / 改判</h2>
+<form data-api="/api/scenarios/{{ scenario.id }}/best" data-method="POST">
+  <label>配置
+    <select name="config_id">
+      {% for c in (compare.configs or comp.configs.values()) %}
+        <option value="{{ c.id }}" {% if scenario.best_config and scenario.best_config.id == c.id %}selected{% elif recommended and recommended.id == c.id %}selected{% endif %}>{{ c.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>状态
+    <select name="status">
+      <option value="confirmed">confirmed（确认推荐）</option>
+      <option value="overridden">overridden（人工改判）</option>
+    </select>
+  </label>
+  <label>理由（改判必填）<textarea name="reason" rows="2" cols="40">{{ scenario.best_reason or '' }}</textarea></label>
+  <button type="submit">提交</button>
+</form>
+
+{% if scenario.history %}
+<h2>最佳配置历史</h2>
+<table>
+  <thead><tr><th>时间</th><th>状态</th><th>原配置</th><th>新配置</th><th>理由</th></tr></thead>
+  <tbody>
+  {% for h in scenario.history %}
+    <tr>
+      <td class="small">{{ h.created_at }}</td>
+      <td><span class="badge {{ h.status }}">{{ h.status }}</span></td>
+      <td>{{ h.prev_config_id or '—' }}</td>
+      <td>{{ h.new_config_id or '—' }}</td>
+      <td>{{ h.reason or '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

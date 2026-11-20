@@ -1,0 +1,55 @@
+{% if case %}
+<div class="drill-card">
+  <h5>测试项细节：<span class="mono">{{ case.case_key }}</span></h5>
+  {% if case.description %}<p class="muted">{{ case.description }}</p>{% endif %}
+  <h6>测试项参数</h6>
+  <div class="table-wrap">
+  <table class="pk-table">
+    <tbody>
+    {% for k, v in case_params.items() %}
+      <tr><th class="mono">{{ k }}</th><td class="mono">{{ v }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+
+  <h6>参数对比：A = {{ a.name if a else '—' }} · B = {{ b.name if b else '—' }}
+    <span class="muted small">（点击 A/B 最佳值查看该配置的运行详情）</span></h6>
+  <div class="table-wrap">
+  <table class="pk-table pk-metrics">
+    <thead>
+      <tr><th>配置 / 指标</th>
+        {% for m in metrics %}
+        <th>{{ m.def.display_name }}
+          <span class="muted small">{{ m.key }}{% if m.def.unit %} · {{ m.def.unit }}{% endif %}</span></th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% if metrics %}
+      <tr><th>A 最佳</th>{% for m in metrics %}<td>
+        {% if m.a_best is not none and a %}<a href="#" class="pk-cell pk-detail-link"
+           hx-get="/partials/scenarios/{{ scenario_id }}/drilldown?case={{ case.id }}&metric={{ m.key }}&config={{ a.id }}&mode=same-node"
+           hx-target="#case-drilldown-{{ case.id }}" hx-swap="innerHTML"
+           title="查看 A 在该测试项的运行详情">{{ m.a_best | fmt }}</a>
+        {% else %}{{ m.a_best | fmt }}{% endif %}</td>{% endfor %}</tr>
+      <tr><th>A 均值</th>{% for m in metrics %}<td>{{ m.a_mean | fmt }}</td>{% endfor %}</tr>
+      <tr><th>B 最佳</th>{% for m in metrics %}<td>
+        {% if m.b_best is not none and b %}<a href="#" class="pk-cell pk-detail-link"
+           hx-get="/partials/scenarios/{{ scenario_id }}/drilldown?case={{ case.id }}&metric={{ m.key }}&config={{ b.id }}&mode=same-node"
+           hx-target="#case-drilldown-{{ case.id }}" hx-swap="innerHTML"
+           title="查看 B 在该测试项的运行详情">{{ m.b_best | fmt }}</a>
+        {% else %}{{ m.b_best | fmt }}{% endif %}</td>{% endfor %}</tr>
+      <tr><th>B 均值</th>{% for m in metrics %}<td>{{ m.b_mean | fmt }}</td>{% endfor %}</tr>
+      <tr><th>A 得分</th>{% for m in metrics %}<td>{{ m.score | fmt }}</td>{% endfor %}</tr>
+      {% else %}
+      <tr><td colspan="{{ metrics | length + 1 }}" class="muted">该测试项在两侧配置间无可比指标。</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+  </div>
+  <div id="case-drilldown-{{ case.id }}" class="drilldown"></div>
+</div>
+{% else %}
+<p class="empty">测试项不存在。</p>
+{% endif %}

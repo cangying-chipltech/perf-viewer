@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}模型列表 · perf-viewer{% endblock %}
+{% block content %}
+<h1>模型</h1>
+{% if not models %}
+<p class="empty">暂无模型。运行 <code>perf-viewer seed</code> 导入种子数据，或通过 <code>POST /api/import</code> 导入。</p>
+{% endif %}
+<div class="cards">
+  {% for m in models %}
+  <a class="card" href="{{ model_url(m.name) }}">
+    <h2>{{ m.name }}</h2>
+    {% if m.aliases %}<p class="muted">别名：{{ m.aliases | join(', ') }}</p>{% endif %}
+    <p class="stats">{{ m.scenario_count }} 场景 · {{ m.run_count }} runs
+      {% if m.last_updated %} · 最近 {{ m.last_updated }}{% endif %}</p>
+    <ul class="best-list">
+      {% for s in m.scenarios %}
+      <li>
+        <span class="scen-name">{{ s.name }}</span>
+        {% if s.best_config %}
+          {% set st = s.best_status_effective or s.best_status %}
+          <span class="badge {{ st }}">{{ '未完成 PK' if st == 'undetermined' else st }}</span>
+          <span class="mono">{{ s.best_config.name }}</span>
+          {% if st == 'undetermined' %}<span class="muted small">（未与 {{ s.best_pk_gaps | length }} 个配置 PK）</span>{% endif %}
+        {% else %}
+          <span class="muted">未定最佳</span>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

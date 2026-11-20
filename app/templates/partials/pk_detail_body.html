@@ -1,0 +1,41 @@
+{% if pk and pk.a and pk.b %}
+  <p class="muted small">当前展示：<span class="mono">A = {{ pk.a.name }}</span>
+    vs <span class="mono">B = {{ pk.b.name }}</span>。判定使用与排名相同的 pairwise case 得分。</p>
+  {% if pk.same %}
+  <p class="notice">请选择两个不同配置进行 PK。</p>
+  {% elif pk.compared_count %}
+  <p>共 PK <strong>{{ pk.compared_count }}</strong> 个测试项：A 胜 <strong>{{ pk.wins }}</strong>，
+    B 胜 <strong>{{ pk.losses }}</strong>，平 <strong>{{ pk.ties }}</strong>
+    {% if pk.no_common %}；另有 {{ pk.no_common }} 个测试项双方有数据但无共同指标{% endif %}。</p>
+  <div id="pk-chart" class="chart"></div>
+  <script type="application/json" id="pk-data">{{ pk_data | tojson }}</script>
+  <div class="table-wrap">
+  <table class="pk-table">
+    <thead><tr><th>测试项</th><th>A 得分</th><th>结果</th><th>详情</th></tr></thead>
+    <tbody>
+    {% for c in pk.comparisons %}
+      <tr>
+        <td class="mono">{{ c.label }}</td>
+        <td>{{ c.score | fmt }}</td>
+        <td>{% if c.status == 'win' %}<span class="badge valid">A 胜</span>
+            {% elif c.status == 'loss' %}<span class="badge invalid">B 胜</span>
+            {% else %}<span class="badge">平局</span>{% endif %}</td>
+        <td><button type="button" class="link-btn" data-pk-toggle="1"
+            data-pk-target="#case-detail-{{ c.case_id }} td"
+            data-pk-url="/partials/scenarios/{{ scenario_id }}/pk_case?case={{ c.case_id }}&pk_a={{ c.detail_a }}&pk_b={{ c.detail_b }}">展示</button></td>
+      </tr>
+      <tr class="case-detail-row" id="case-detail-{{ c.case_id }}"><td colspan="4"></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="notice">两配置没有共同测试项，<strong>未进行过 PK</strong>，无法据此判定谁更优。</p>
+  {% endif %}
+  <p class="muted small">覆盖测试项：A
+    {% for k, n in pk.coverage_a %}{{ k }}={{ n }}{% if not loop.last %}、{% endif %}{% else %}无{% endfor %}；
+    B {% for k, n in pk.coverage_b %}{{ k }}={{ n }}{% if not loop.last %}、{% endif %}{% else %}无{% endfor %}。
+    只有双方都跑过的 case 且存在共同指标时才计入 PK。</p>
+{% else %}
+  <p class="empty">无 PK 数据。</p>
+{% endif %}

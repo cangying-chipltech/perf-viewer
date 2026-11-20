@@ -1,0 +1,29 @@
+{
+  "benchmarks": [
+    {
+      "metrics": {
+        "request_totals": {"total": 8, "successful": 8, "errored": 0, "incomplete": 0},
+        "request_latency": {
+          "successful": {"mean": 42.18, "total": 337.44, "count": 8,
+                          "min": 41.2, "max": 43.14, "percentiles": {"p50": 42.0, "p99": 43.14}},
+          "all": {"mean": 42.18, "total": 337.44, "count": 8}
+        },
+        "time_to_first_token_ms": {
+          "successful": {"mean": 31997.0, "count": 8, "percentiles": {"p99": 32071.0}}
+        },
+        "time_per_output_token_ms": {
+          "successful": {"mean": 164.8, "count": 8, "percentiles": {"p99": 168.5}}
+        },
+        "inter_token_latency_ms": {
+          "successful": {"mean": 39.9, "count": 8, "percentiles": {"p99": 43.9}}
+        },
+        "output_tokens_count": {
+          "successful": {"mean": 256.0, "total": 2048, "count": 8}
+        },
+        "prompt_tokens_count": {
+          "successful": {"mean": 25001.625, "total": 200013, "count": 8}
+        }
+      }
+    }
+  ]
+}

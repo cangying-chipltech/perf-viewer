@@ -1,0 +1,67 @@
+{% if case and config %}
+<div class="drill-card">
+  <h4>下钻：{{ case.case_key }} · {{ metric_def.display_name if metric_def else metric }}
+    · <span class="mono">{{ config.name }}</span></h4>
+  {% if cell %}
+    {% if mode == 'same-node' %}
+      <table>
+        <thead><tr><th>节点</th><th>代表值（均值）</th><th>校正后</th><th>runs</th><th>范围</th><th>来源 run</th></tr></thead>
+        <tbody>
+        {% for node, rep in cell.same.items() %}
+          <tr>
+            <td class="mono">{{ node }}</td>
+            <td>{{ rep.value | fmt }}</td>
+            <td>{% if rep.adjusted is not none %}{{ rep.adjusted | fmt }}{% else %}—{% endif %}</td>
+            <td>{{ rep.n_runs }}</td>
+            <td>[{{ rep.min | fmt }}, {{ rep.max | fmt }}]</td>
+            <td>{% for rid in rep.run_ids %}<a href="/runs/{{ rid }}">#{{ rid }}</a> {% endfor %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% elif mode == 'adjusted' %}
+      <table>
+        <thead><tr><th>节点</th><th>原始代表值</th><th>校正后代表值</th><th>校正范围</th><th>runs</th></tr></thead>
+        <tbody>
+        {% for node, rep in cell.same.items() %}
+          <tr>
+            <td class="mono">{{ node }}</td>
+            <td>{{ rep.value | fmt }}</td>
+            <td>{% if rep.adjusted is not none %}{{ rep.adjusted | fmt }}{% else %}—{% endif %}</td>
+            <td>{% if rep.adjusted is not none %}[{{ rep.min_adjusted | fmt }}, {{ rep.max_adjusted | fmt }}]{% else %}—{% endif %}</td>
+            <td>{{ rep.n_runs }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="muted small">校正值 = 原始值 × exp(-节点 log 倍率)，折算到该连通分量的参考节点；无跨节点证据的节点不参与校正。</p>
+    {% else %}
+      <p>历史最好值：<strong>{{ cell.best.value | fmt }}</strong>
+        （{{ cell.best.n_runs }} runs，范围 [{{ cell.best.min | fmt }}, {{ cell.best.max | fmt }}]）</p>
+    {% endif %}
+  {% endif %}
+  <h5>该配置 × case 的全部运行</h5>
+  <table>
+    <thead><tr><th>run</th><th>节点</th><th>指标值</th><th>n</th><th>状态</th><th>开始时间</th><th>worker</th></tr></thead>
+    <tbody>
+    {% for r in runs %}
+      <tr class="{{ 'row-invalid' if not r.valid or r.excluded else '' }}">
+        <td><a href="/runs/{{ r.id }}">#{{ r.id }}</a></td>
+        <td class="mono">{{ r.node }}</td>
+        <td>{{ r.value | fmt }}</td>
+        <td>{{ r.n_measured if r.n_measured is not none else '—' }}</td>
+        <td>
+          {% if not r.valid %}<span class="badge invalid">无效</span>{% endif %}
+          {% if r.excluded %}<span class="badge excluded">已剔除</span>{% endif %}
+          {% if r.valid and not r.excluded %}<span class="badge valid">有效</span>{% endif %}
+        </td>
+        <td class="small">{{ r.started_at or '—' }}</td>
+        <td>{{ r.worker_label or '—' }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">无下钻数据。</p>
+{% endif %}

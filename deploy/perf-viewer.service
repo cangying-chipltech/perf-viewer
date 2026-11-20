@@ -1,0 +1,13 @@
+[Unit]
+Description=perf-viewer 推理压测结果汇总呈现服务
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/cangying/perf-viewer
+ExecStart=/home/cangying/perf-viewer/start.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

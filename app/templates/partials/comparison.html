@@ -1,0 +1,146 @@
+<div id="comparison-area">
+  {% if not selected %}
+    <p class="empty">该场景未关联测试集合。请在<a href="/catalog">目录管理</a>中关联 suite。</p>
+  {% else %}
+    {% for note in selected.insufficient %}
+      <p class="notice">{{ note }}</p>
+    {% endfor %}
+
+    <div class="tabs">
+      {% for su in comp.suites %}
+        <a class="tab {% if su.suite.id == selected.suite.id %}active{% endif %}"
+           hx-get="/partials/scenarios/{{ scenario_id }}/comparison?suite={{ su.suite.id }}&mode={{ mode }}"
+           hx-target="#comparison-area" hx-swap="outerHTML"
+           href="?suite={{ su.suite.id }}&mode={{ mode }}">{{ su.suite.key }}</a>
+      {% endfor %}
+      <span class="spacer"></span>
+      <a class="tab {% if mode == 'same-node' %}active{% endif %}"
+         hx-get="/partials/scenarios/{{ scenario_id }}/comparison?suite={{ selected.suite.id }}&mode=same-node"
+         hx-target="#comparison-area" hx-swap="outerHTML"
+         href="?suite={{ selected.suite.id }}&mode=same-node">同节点比较</a>
+      <a class="tab {% if mode == 'adjusted' %}active{% endif %}"
+         hx-get="/partials/scenarios/{{ scenario_id }}/comparison?suite={{ selected.suite.id }}&mode=adjusted"
+         hx-target="#comparison-area" hx-swap="outerHTML"
+         href="?suite={{ selected.suite.id }}&mode=adjusted">跨节点校正</a>
+      <a class="tab {% if mode == 'best' %}active{% endif %}"
+         hx-get="/partials/scenarios/{{ scenario_id }}/comparison?suite={{ selected.suite.id }}&mode=best"
+         hx-target="#comparison-area" hx-swap="outerHTML"
+         href="?suite={{ selected.suite.id }}&mode=best">最优值比较</a>
+    </div>
+    <p class="muted small">
+      {% if mode == 'same-node' %}
+        代表值 = 节点×配置×case 全部有效运行均值；优先按共同节点逐一比较。
+        无共同节点时，用同配置跨节点用例估计的节点倍率做校正比较（按证据量打折）。
+      {% elif mode == 'adjusted' %}
+        代表值 = 各节点代表值按节点倍率折算到同一基准后的均值；节点倍率来自同配置×case
+        在不同节点的运行（可用其他用例），因此可在配置只跑过不同节点时做近似横向对比。
+      {% else %}
+        代表值 = 配置跨全部节点/运行的历史最好值（延迟 min、吞吐 max）；ε={{ comp.scoring.epsilon }} 内记平局。
+      {% endif %}
+      权重 w_same={{ comp.scoring.w_same }} / w_adj={{ comp.scoring.w_adj }} / w_best={{ comp.scoring.w_best }}；
+      ε={{ comp.scoring.epsilon }}。
+    </p>
+
+    {% if selected.compared_cases %}
+    <p class="muted small">参与对比的测试项（{{ selected.compared_case_count }}）：
+      {% for key in selected.compared_cases %}<span class="mono">{{ key }}</span>{% if not loop.last %}、{% endif %}{% endfor %}
+    </p>
+    {% else %}
+    <p class="muted small">暂无可对比的测试项（没有两套及以上配置共享同一 case/指标）。</p>
+    {% endif %}
+
+    {% if selected.ranking %}
+    <h3>配置排名（{{ selected.suite.key }}）</h3>
+    <table class="ranking">
+      <thead><tr><th>#</th><th>配置</th><th>总分</th><th>参与 case 数</th><th>有效 runs</th></tr></thead>
+      <tbody>
+      {% for r in selected.ranking %}
+        <tr {% if r.config_id == selected.recommended_config_id %}class="recommended"{% endif %}>
+          <td>{{ r.rank }}</td>
+          <td class="mono">{{ r.name }}
+            {% if r.config_id == selected.recommended_config_id %}<span class="badge recommended">推荐最佳</span>{% endif %}
+          </td>
+          <td>{{ r.total_score | fmt }}</td>
+          <td>{{ r.cases_compared }}</td>
+          <td>{{ r.n_runs }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if table %}
+    <div class="table-wrap">
+    <table class="comparison">
+      <thead>
+        <tr>
+          <th>case / 指标</th>
+          {% for cid in selected.config_ids %}
+            <th class="mono">{{ comp.configs[cid].name }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+      {% for row in table %}
+        {% if row.metric is none %}
+          <tr class="case-header">
+            <td colspan="{{ selected.config_ids | length + 1 }}">
+              <strong class="mono">{{ row.case.case_key }}</strong>
+              <span class="muted">{{ row.case.description or '' }}</span>
+              <span class="muted small">（无数据）</span>
+              {% for note in row.notes %}<div class="notice small">{{ note }}</div>{% endfor %}
+            </td>
+          </tr>
+        {% else %}
+          {% if loop.first or table[loop.index0 - 1].case.id != row.case.id %}
+          <tr class="case-header">
+            <td colspan="{{ selected.config_ids | length + 1 }}">
+              <strong class="mono">{{ row.case.case_key }}</strong>
+              <span class="muted">{{ row.case.description or '' }}</span>
+              <span class="muted small">weight={{ row.case.weight }}</span>
+              {% for note in row.notes %}<div class="notice small">{{ note }}</div>{% endfor %}
+            </td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td class="metric-name">
+              {{ row.metric_def.display_name }}
+              <span class="muted small">{{ row.metric_def.key }} · {{ row.metric_def.unit or '' }} ·
+                {{ '越低越好' if row.metric_def.direction == 'lower' else '越高越好' }}</span>
+            </td>
+            {% for cell in row.cells %}
+              {% if cell.value is none %}
+                <td class="cell empty-cell">—</td>
+              {% else %}
+                <td class="cell {{ cell.mark }}"
+                    hx-get="/partials/scenarios/{{ scenario_id }}/drilldown?case={{ row.case.id }}&metric={{ row.metric }}&config={{ cell.config_id }}&mode={{ mode }}"
+                    hx-target="#drilldown" hx-swap="innerHTML">
+                  <span class="value">{{ cell.value | fmt }}</span>
+                  {% if cell.mark == 'win' %}<span class="mark">✓</span>
+                  {% elif cell.mark == 'loss' %}<span class="mark">✗</span>
+                  {% elif cell.mark == 'tie' %}<span class="mark">=</span>{% endif %}
+                  <span class="sub">{{ cell.n_label }} · [{{ cell.min | fmt }}, {{ cell.max | fmt }}]{% if cell.node_mode == 'adjusted' and mode == 'same-node' %} · 判定用跨节点校正{% if cell.adjusted_value is not none %}，校正后≈{{ cell.adjusted_value | fmt }}{% endif %}{% endif %}</span>
+                </td>
+              {% endif %}
+            {% endfor %}
+          </tr>
+        {% endif %}
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+
+    <h3>图表</h3>
+    <div class="chart-controls">
+      <label>case <select id="chart-case"></select></label>
+      <label>指标 <select id="chart-metric"></select></label>
+    </div>
+    <div id="chart" class="chart"></div>
+    <script type="application/json" id="chart-data">{{ chart_data | tojson }}</script>
+    <script type="application/json" id="chart-mode">{{ mode | tojson }}</script>
+    {% else %}
+      <p class="empty">暂无可对比数据。</p>
+    {% endif %}
+  {% endif %}
+  <div id="drilldown" class="drilldown"></div>
+</div>

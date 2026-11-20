@@ -1,0 +1,134 @@
+{% extends "base.html" %}
+{% block title %}{{ scenario.name }} · {{ model.name }} · perf-viewer{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/">模型</a> / <a href="{{ model_url(model.name) }}">{{ model.name }}</a> / {{ scenario.name }}</p>
+<h1>{{ scenario.name }}</h1>
+{% if scenario.description %}<p class="muted">{{ scenario.description }}</p>{% endif %}
+
+{% if best_view %}
+{% set cfg = best_view.config %}
+{% set deploy = cfg.deploy %}
+<section class="best-card best-config-card">
+  <h3>{% if best_view.undetermined %}候选配置（未完成 PK）{% else %}当前最佳配置{% endif %}
+    <span class="badge {{ best_view.badge }}">{{ best_view.badge_text }}</span>
+    <strong class="mono">{{ cfg.name }}</strong></h3>
+  {% if best_view.undetermined %}
+  <p class="notice">无法判定全局最佳：该配置未与以下配置进行过 PK —
+    {% for g in best_view.pk_gaps %}<span class="mono">{{ g.name }}</span>{% if not loop.last %}、{% endif %}{% endfor %}。
+    在补充共同测试项之前，不能判定 {{ cfg.name }} 优于这些配置；各 suite 的推荐结果见下钻对比。</p>
+  {% endif %}
+  {% if scenario.best_config and scenario.best_reason %}<p>理由：{{ scenario.best_reason }}</p>{% endif %}
+  {% if scenario.best_config and scenario.best_updated_at %}<p class="muted small">更新于 {{ scenario.best_updated_at }}</p>{% endif %}
+
+  <h4>部署信息</h4>
+  {% if deploy.docker_cmd or deploy.env or deploy.serve_cmd or deploy.extra_cmds %}
+    {% if deploy.docker_cmd %}
+    <h5>Docker 启动命令
+      <button type="button" class="copy" data-copy="#docker-cmd" data-label="复制">复制</button></h5>
+    <pre id="docker-cmd" class="cmd">{{ deploy.docker_cmd }}</pre>
+    {% endif %}
+    {% if deploy.env %}
+    <h5>模型环境变量
+      <button type="button" class="copy" data-copy="#env-export" data-label="复制 export">复制 export</button></h5>
+    <pre id="env-export" class="cmd">{% for k, v in deploy.env.items() %}export {{ k }}={{ v }}
+{% endfor %}</pre>
+    {% endif %}
+    {% if deploy.serve_cmd %}
+    <h5>模型启动命令
+      <button type="button" class="copy" data-copy="#serve-cmd" data-label="复制">复制</button></h5>
+    <pre id="serve-cmd" class="cmd">{{ deploy.serve_cmd }}</pre>
+    {% endif %}
+    {% if deploy.extra_cmds %}
+    <h5>额外启动命令</h5>
+    {% for item in deploy.extra_cmds %}
+    <details class="cmd-details">
+      <summary>{{ item.title or '命令' }}</summary>
+      <p><button type="button" class="copy" data-copy="#extra-cmd-{{ loop.index }}" data-label="复制">复制</button></p>
+      <pre id="extra-cmd-{{ loop.index }}" class="cmd">{{ item.cmd }}</pre>
+      {% if item.note %}<p class="muted small">{{ item.note }}</p>{% endif %}
+    </details>
+    {% endfor %}
+    {% endif %}
+    {% if deploy.source %}<p class="muted small">来源：{{ deploy.source }}</p>{% endif %}
+  {% else %}
+    <p class="notice">部署信息未录入。可在<a href="/catalog">目录管理</a>的配置集中补充，
+      或导入时在 manifest 的 <code>config.deploy</code> 提供。</p>
+  {% endif %}
+</section>
+
+<h2>{% if best_view.undetermined %}当前数据（未判定全局最佳）{% else %}当前最佳数据{% endif %}</h2>
+{% if best_data %}
+{% for bd in best_data %}
+<details class="suite-block" open>
+  <summary><strong class="mono">{{ bd.suite.key }}</strong>
+    <span class="muted">{{ bd.suite.name }}</span></summary>
+  {% if not bd.focus_is_global and bd.focus_config %}
+  <p class="notice small">本套件数据基准：<span class="mono">{{ bd.focus_config.name }}</span>
+    {% if bd.focus_rank %}（排名 #{{ bd.focus_rank }}）{% endif %}。
+    全局最佳配置未参与本套件；其余测试项缺失时回退到本套件排名靠前的配置。</p>
+  {% endif %}
+  <p class="muted small">单元格为各指标最佳值；范围、n runs、覆盖节点与来源 run（#ID）显示在单元格内。</p>
+  <div class="table-wrap best-data-wrap">
+  <table class="best-data">
+    <thead><tr><th class="case-cell">case</th>
+      {% for mk in bd.metric_keys %}
+      <th>{{ mk.def.display_name }}
+        <span class="muted small">{{ mk.key }}{% if mk.def.unit %} · {{ mk.def.unit }}{% endif %} ·
+          {{ '越低越好' if mk.def.direction == 'lower' else '越高越好' }}</span></th>
+      {% endfor %}
+    </tr></thead>
+    <tbody>
+    {% for c in bd.cases %}
+      <tr>
+        <th class="case-cell">
+          <strong class="mono">{{ c.case.case_key }}</strong>
+          <div class="muted small">{{ c.case.description or '' }}</div>
+          <div class="muted small">weight={{ c.case.weight }}</div>
+          {% if c.fallback_sources %}
+          <div class="muted small">* 回退来源：
+            {% for src in c.fallback_sources %}{% if src.rank %}#{{ src.rank }} {% endif %}{{ src.name }}{% if not loop.last %}、{% endif %}{% endfor %}
+          </div>
+          {% endif %}
+        </th>
+        {% for mk in bd.metric_keys %}
+        {% set m = c.metric_map.get(mk.key) %}
+        <td class="metric-cell">
+          {% if not m or m.missing %}
+          <span class="muted small">缺少数据</span>
+          {% else %}
+          <span class="mono"><strong>{{ m.best.value | fmt }}</strong>{% if m.fallback %}<sup>*</sup>{% endif %}</span>
+          <div class="muted small">[{{ m.best.min | fmt }}, {{ m.best.max | fmt }}] · {{ m.best.n_runs }} runs{% if m.same %} · {% for node in m.same %}{{ node }}{% if not loop.last %}、{% endif %}{% endfor %}{% endif %}
+            {% for rid in m.best.run_ids %}· <a href="/runs/{{ rid }}">#{{ rid }}</a> {% endfor %}
+          </div>
+          {% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</details>
+{% endfor %}
+{% else %}
+<p class="empty">该配置暂无有效运行数据。</p>
+{% endif %}
+
+<p class="drill-nav">
+  <a class="link-btn" href="{{ model_url(model.name) }}/scenarios/{{ scenario.id }}/compare#aggregate-pk">
+    下钻对比（核心配置聚合 PK 矩阵）→</a>
+</p>
+{% else %}
+{% if not scenario.suites %}
+<p class="empty">该交付场景尚未关联测试集合（空壳）。可在<a href="/catalog">目录管理</a>关联 suite，
+  再导入该场景的运行数据后即可展示最佳配置与最佳数据。</p>
+{% else %}
+<p class="empty">暂无可展示的最佳配置与数据：该场景关联的 suite 尚无有效运行，
+  或仅有多套配置但缺少可对比数据。可先导入运行数据。</p>
+{% endif %}
+<p class="drill-nav">
+  <a class="link-btn" href="{{ model_url(model.name) }}/scenarios/{{ scenario.id }}/compare">
+    查看配置与对比详情 →</a>
+</p>
+{% endif %}
+{% endblock %}

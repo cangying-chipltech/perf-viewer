@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}{{ model.name }} · perf-viewer{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/">模型</a> / {{ model.name }}</p>
+<h1>{{ model.name }}</h1>
+
+<h2>交付场景</h2>
+<div class="cards">
+  {% for s in model.scenarios %}
+  <a class="card" href="{{ model_url(model.name) }}/scenarios/{{ s.id }}">
+    <h3>{{ s.name }}</h3>
+    <p class="muted">{{ s.description or '' }}</p>
+    <p class="stats">
+      {% for su in s.suites %}<span class="tag">{{ su.key }}</span>{% endfor %}
+      {% if not s.suites %}<span class="muted">空壳（未关联测试集合）</span>{% endif %}
+    </p>
+    <div class="best-box">
+      {% if s.best_config %}
+        {% set st = s.best_status_effective or s.best_status %}
+        <span class="badge {{ st }}">{{ '未完成 PK' if st == 'undetermined' else st }}</span>
+        <span class="mono">{{ s.best_config.name }}</span>
+        {% if st == 'undetermined' %}<span class="muted small">（未与 {{ s.best_pk_gaps | length }} 个配置 PK，不能判定胜出）</span>{% endif %}
+        {% if s.best_reason %}<p class="muted">理由：{{ s.best_reason }}</p>{% endif %}
+      {% else %}
+        <span class="muted">最佳配置：未确认（进入场景页查看自动推荐）</span>
+      {% endif %}
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

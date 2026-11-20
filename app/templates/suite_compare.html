@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ scenario.name }} · {{ selected.suite.key if selected else '测试项对比' }} · {{ model.name }} · perf-viewer{% endblock %}
+{% block content %}
+<p class="crumb"><a href="/">模型</a> / <a href="{{ model_url(model.name) }}">{{ model.name }}</a> /
+  <a href="{{ model_url(model.name) }}/scenarios/{{ scenario.id }}">{{ scenario.name }}</a> / 测试项对比</p>
+<h1>{{ scenario.name }} · {{ selected.suite.key if selected else '测试项对比' }}</h1>
+<p class="drill-nav">
+  <a class="link-btn" href="{{ model_url(model.name) }}/scenarios/{{ scenario.id }}/compare#aggregate-pk">← 返回聚合 PK</a>
+</p>
+
+{% include "partials/comparison.html" %}
+{% endblock %}
