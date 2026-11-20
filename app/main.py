@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from . import config
-from .api import catalog, read, write
+from .api import catalog, read, skills, write
 from .db import init_db
 from .entities import seed_metric_defs
 from .db import get_db
@@ -20,6 +20,7 @@ def create_app() -> FastAPI:
     app.include_router(read.router)
     app.include_router(write.router)
     app.include_router(catalog.router)
+    app.include_router(skills.router)
 
     from . import web
     app.include_router(web.router)

@@ -294,8 +294,8 @@ def load_comparison(conn, scenario_id: int, suite_id: int | None = None) -> dict
         configs[cfg["id"]] = cfg
     nodes = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM node").fetchall()}
 
-    # 始终读取该模型全部有效运行：节点倍率需要复用其他 suite/case 的跨节点证据；
-    # 具体 suite 的评分在下面按该 suite 的 case 过滤。
+    # 读取该模型全部有效运行，随后按 suite 的 case 过滤；
+    # 配置归属场景由 run.suite_id → scenario_suite 推导，节点倍率也按 suite 独立估计。
     run_sql = "SELECT * FROM run WHERE model_id = ? AND valid = 1 AND excluded = 0"
     run_params: list = [scenario["model_id"]]
     res_sql = ("SELECT cr.* FROM case_result cr JOIN run r ON r.id = cr.run_id"

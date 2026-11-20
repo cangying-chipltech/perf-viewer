@@ -245,3 +245,9 @@ table.best-data th.case-cell { width: 150px; min-width: 0; max-width: 150px; }
 table.best-data thead th { white-space: normal; }
 table.best-data td.metric-cell { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .best-data-wrap { overflow-x: auto; }
+
+.case-filter { margin: 6px 0 8px; }
+.case-filter summary { cursor: pointer; font-size: 12px; color: var(--accent); }
+.case-filter-list { max-height: 160px; overflow: auto; display: flex; flex-wrap: wrap;
+  gap: 4px 10px; padding: 6px; border: 1px solid #e3e6ea; border-radius: 6px; margin: 6px 0; }
+.case-filter-list .chip { margin: 0; }

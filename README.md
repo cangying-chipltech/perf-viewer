@@ -34,6 +34,7 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 | `PERF_VIEWER_PORT` | `8600` | 监听端口 |
 | `PERF_VIEWER_MAX_UPLOAD_MB` | `512` | 单次导入上传总量上限 |
 | `PERF_VIEWER_BASE_URL` | `http://127.0.0.1:8600` | CLI 目标服务地址 |
+| `PERF_VIEWER_SKILLS_DIR` | `.kilo/skills` | 技能查询/下载目录 |
 
 数据布局：`data/perf_viewer.sqlite3`（WAL）、`data/artifacts/<batch_id>/<相对路径>`。
 
@@ -150,6 +151,20 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 `POST /api/import`（multipart，Bearer token）：`manifest`（manifest.json 文件）或 `manifest_json`（表单字段）+ `files`（若干文件或单个 zip）+ `dry_run`。返回 batch 报告（逐 run imported/duplicate/failed、实体登记、产物落盘）。
 
 **幂等**：同配置指纹 + 同 run 特征（节点/suite/backend/case 数据）→ 报 `duplicate` 而非静默重复。run 特征不含 manifest 注入的时间戳，保证无时间产物（CSV）重复导入幂等。
+
+### 技能 API
+
+项目技能位于 `.kilo/skills/<dir>/SKILL.md`，可通过 API 在线查询与下载：
+
+```bash
+GET /api/skill                          # 列出全部技能
+GET /api/skill?name=perf-viewer-import  # 查询技能详情（含 SKILL.md 与文件校验和）
+GET /api/skill/{name}                   # 同上，路径形式
+GET /api/skill/package?name=<name>      # 下载 zip（响应头 X-Checksum-SHA256）
+```
+
+`PERF_VIEWER_SKILLS_DIR` 可覆盖技能目录，默认 `.kilo/skills`。
+
 
 ### CLI
 

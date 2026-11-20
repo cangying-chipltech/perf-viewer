@@ -47,6 +47,14 @@
     }
   });
 
+  document.addEventListener("DOMContentLoaded", function () {
+    const targets = new Set();
+    document.querySelectorAll("input[data-case-filter]").forEach(function (box) {
+      targets.add(box.getAttribute("data-target"));
+    });
+    targets.forEach(applyCaseFilter);
+  });
+
   document.addEventListener("htmx:configRequest", function (e) {
     const t = getToken();
     if (t) e.detail.headers["Authorization"] = "Bearer " + t;
@@ -89,6 +97,38 @@
     } else {
       fallback();
     }
+  });
+
+  function applyCaseFilter(target) {
+    const table = document.querySelector(target);
+    if (!table) return;
+    const boxes = Array.from(document.querySelectorAll(
+      'input[data-case-filter][data-target="' + target + '"]'));
+    const selected = new Set(boxes.filter(function (b) { return b.checked; })
+      .map(function (b) { return b.value; }));
+    let visible = 0;
+    table.querySelectorAll("tr[data-case-key]").forEach(function (tr) {
+      const show = selected.has(tr.getAttribute("data-case-key"));
+      tr.style.display = show ? "" : "none";
+      if (show) visible += 1;
+    });
+    document.querySelectorAll('[data-case-count][data-target="' + target + '"]')
+      .forEach(function (el) { el.textContent = "显示 " + visible + " / " + boxes.length; });
+  }
+
+  document.addEventListener("change", function (e) {
+    const box = e.target.closest("input[data-case-filter]");
+    if (box) applyCaseFilter(box.getAttribute("data-target"));
+  });
+
+  document.addEventListener("click", function (e) {
+    const btn = e.target.closest("button[data-case-bulk]");
+    if (!btn) return;
+    const target = btn.getAttribute("data-target");
+    const checked = btn.getAttribute("data-case-bulk") === "all";
+    document.querySelectorAll('input[data-case-filter][data-target="' + target + '"]')
+      .forEach(function (box) { box.checked = checked; });
+    applyCaseFilter(target);
   });
 
   document.addEventListener("submit", async function (e) {

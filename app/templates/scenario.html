@@ -68,8 +68,23 @@
     全局最佳配置未参与本套件；其余测试项缺失时回退到本套件排名靠前的配置。</p>
   {% endif %}
   <p class="muted small">单元格为各指标最佳值；范围、n runs、覆盖节点与来源 run（#ID）显示在单元格内。</p>
+  <details class="case-filter">
+    <summary>case 过滤（{{ bd.cases | length }}）</summary>
+    <div class="case-filter-list">
+      {% for c in bd.cases %}
+      <label class="chip"><input type="checkbox" data-case-filter
+        data-target="#best-data-{{ bd.suite.id }}" value="{{ c.case.case_key }}" checked>
+        {{ c.case.case_key }}</label>
+      {% endfor %}
+    </div>
+    <p>
+      <button type="button" data-case-bulk="all" data-target="#best-data-{{ bd.suite.id }}">全选</button>
+      <button type="button" data-case-bulk="none" data-target="#best-data-{{ bd.suite.id }}">清空</button>
+      <span class="muted small" data-case-count data-target="#best-data-{{ bd.suite.id }}"></span>
+    </p>
+  </details>
   <div class="table-wrap best-data-wrap">
-  <table class="best-data">
+  <table class="best-data" id="best-data-{{ bd.suite.id }}">
     <thead><tr><th class="case-cell">case</th>
       {% for mk in bd.metric_keys %}
       <th>{{ mk.def.display_name }}
@@ -79,7 +94,7 @@
     </tr></thead>
     <tbody>
     {% for c in bd.cases %}
-      <tr>
+      <tr data-case-key="{{ c.case.case_key }}">
         <th class="case-cell">
           <strong class="mono">{{ c.case.case_key }}</strong>
           <div class="muted small">{{ c.case.description or '' }}</div>

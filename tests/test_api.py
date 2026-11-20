@@ -299,3 +299,30 @@ class TestArtifactSafety:
         assert client.get(f"/api/scenarios/{sid}/comparison?mode=best").status_code == 200
         assert client.get(f"/api/scenarios/{sid}/comparison?mode=adjusted").status_code == 200
         assert client.get("/api/scenarios/999/comparison").status_code == 404
+
+class TestSkillAPI:
+    def test_list_detail_and_package(self, client):
+        listing = client.get("/api/skill")
+        assert listing.status_code == 200
+        skills = listing.json()["skills"]
+        assert skills
+        name = next(s["name"] for s in skills if s["name"] == "perf-viewer-import")
+
+        detail = client.get(f"/api/skill?name={name}")
+        assert detail.status_code == 200
+        body = detail.json()
+        assert "SKILL.md" in [f["path"] for f in body["files"]]
+        assert "perf-viewer-import" in body["skill_md"]
+
+        pkg = client.get(f"/api/skill/package?name={name}")
+        assert pkg.status_code == 200
+        assert pkg.headers["content-type"] == "application/zip"
+        assert pkg.headers.get("X-Checksum-SHA256")
+        with zipfile.ZipFile(io.BytesIO(pkg.content)) as zf:
+            names = zf.namelist()
+        assert f"{name}/SKILL.md" in names
+        assert f"{name}/scripts/import_kit.py" in names
+
+    def test_missing_and_invalid_name(self, client):
+        assert client.get("/api/skill?name=not-exists").status_code == 404
+        assert client.get("/api/skill/package?name=../etc").status_code == 400
