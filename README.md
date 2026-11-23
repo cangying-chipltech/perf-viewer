@@ -185,6 +185,22 @@ rsync -av worker:/data/llm-load-results/ ./local-results/
 perf-viewer import ./local-results --manifest manifest.json
 ```
 
+## Docker
+
+```bash
+docker build -t perf-viewer:latest -t perf-viewer:0.1.0 .
+
+docker run -d --name perf-viewer -p 8600:8600 \
+  -e PERF_VIEWER_TOKEN='<写操作 token>' \
+  -v perf-viewer-data:/app/data \
+  perf-viewer:latest
+```
+
+- 镜像内含 `app/` 与 `.kilo/skills/`（技能 API 可直接查询/下载）。
+- 数据持久化在 `/app/data`；使用 named volume 或把宿主机目录 chown 给 UID `10001`。
+- `PERF_VIEWER_TOKEN` 通过环境变量注入，不要把 `.env` 打进镜像。
+- 内置 healthcheck 调用 `/healthz`。
+
 ## 页面
 
 - `/` 模型列表卡片（场景数、run 数、最近更新、各场景最佳配置摘要）。
