@@ -9,8 +9,46 @@
 </p>
 
 <h2 id="aggregate-pk">核心配置（聚合）PK</h2>
+{% if group_tops and has_group_variants %}
+<h3>组内 PK · 选出 Top 变体</h3>
+<p class="muted small">每个聚合配置先在组内两两 PK 出 Top 变体，再由各组 Top 参与跨组 PK。</p>
+<div class="table-wrap">
+<table class="pk-matrix">
+  <thead>
+    <tr><th>聚合配置</th><th>变体数</th><th>组内 Top</th><th>组内对比</th><th>组内明细</th></tr>
+  </thead>
+  <tbody>
+  {% for item in group_tops %}
+    <tr>
+      <th class="mono">{{ item.group.label }}</th>
+      <td>{{ item.variants | length }}</td>
+      <td class="mono">{{ item.top.name }}</td>
+      <td>
+        {% if item.variants | length < 2 %}
+          <span class="muted">仅 1 个变体</span>
+        {% elif item.top_score is not none %}
+          得分 {{ item.top_score | fmt }} · 胜 {{ item.top_stats.wins }} / 负 {{ item.top_stats.losses }} / 平 {{ item.top_stats.ties }}
+          <span class="muted small">（{{ item.top_stats.compared }} 个测试项）</span>
+        {% else %}
+          <span class="muted">无组内共同测试项，按覆盖度选择</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if item.variants | length > 1 %}
+        <a href="#" class="pk-cell" title="查看该聚合配置的组内变体 PK 矩阵"
+           hx-get="/partials/scenarios/{{ scenario.id }}/pk_group_inner?g={{ item.group.id }}"
+           hx-target="#pk-detail" hx-swap="outerHTML">查看组内变体 PK 矩阵</a>
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
 {% if group_matrix and group_matrix.groups | length > 1 %}
-<h3>聚合 PK 矩阵（点击展开变体差异）</h3>
+<h3>跨组 PK 矩阵（各组 Top 变体）</h3>
 <div class="table-wrap">
 <table class="pk-matrix">
   <thead>
@@ -18,9 +56,9 @@
       {% for g in group_matrix.groups %}
       <th class="mono">
         {% if g.configs | length > 1 %}
-        <a href="#" class="pk-cell" title="查看该聚合配置的变体 PK 矩阵"
+        <a href="#" class="pk-cell" title="查看该聚合配置的组内变体 PK 矩阵"
            hx-get="/partials/scenarios/{{ scenario.id }}/pk_group_inner?g={{ g.id }}"
-           hx-target="#pk-detail" hx-swap="outerHTML">{{ g.label }}<span class="muted small">（{{ g.configs | length }} 变体）</span></a>
+           hx-target="#pk-detail" hx-swap="outerHTML">{{ g.label }}<span class="muted small">（{{ g.configs | length }} 变体 · Top: {{ group_matrix.top_names[g.id] }}）</span></a>
         {% else %}{{ g.label }}{% endif %}
       </th>
       {% endfor %}
@@ -32,9 +70,9 @@
     <tr>
       <th class="mono">
         {% if row.group.configs | length > 1 %}
-        <a href="#" class="pk-cell" title="查看该聚合配置的变体 PK 矩阵"
+        <a href="#" class="pk-cell" title="查看该聚合配置的组内变体 PK 矩阵"
            hx-get="/partials/scenarios/{{ scenario.id }}/pk_group_inner?g={{ row.group.id }}"
-           hx-target="#pk-detail" hx-swap="outerHTML">{{ row.group.label }}<span class="muted small">（{{ row.group.configs | length }} 变体）</span></a>
+           hx-target="#pk-detail" hx-swap="outerHTML">{{ row.group.label }}<span class="muted small">（{{ row.group.configs | length }} 变体 · Top: {{ group_matrix.top_names[row.group.id] }}）</span></a>
         {% else %}{{ row.group.label }}{% endif %}
       </th>
       {% for cell in row.cells %}
@@ -45,6 +83,7 @@
         {% else %}
           <td class="cell">
             <a href="#" class="pk-cell"
+               title="A Top: {{ cell.top_a }} / B Top: {{ cell.top_b }}"
                hx-get="/partials/scenarios/{{ scenario.id }}/pk_group?ga={{ row.group.id }}&gb={{ cell.group_id }}"
                hx-target="#pk-detail" hx-swap="outerHTML">
               {% if cell.has_pk %}A胜 {{ cell.wins }} · B胜 {{ cell.losses }} · 平 {{ cell.ties }}
@@ -63,13 +102,31 @@
 
 
 {% if group_pk %}
-<h3>PK 图表（默认聚合对）</h3>
+<h3>跨组 PK 图表（默认 Top 组合）</h3>
 {% with pk = group_pk, pk_data = group_pk_data %}
   {% include "partials/pk_detail.html" %}
 {% endwith %}
+{% elif single_group_inner and single_group_inner.variants | length > 1 %}
+<h3>组内变体 PK 矩阵（仅 1 个聚合配置组）</h3>
+<div id="pk-detail">
+{% with group = single_group_inner.group, matrix_rows = single_group_inner.matrix_rows, top = single_group_inner.top, top_score = single_group_inner.top_score, top_stats = single_group_inner.top_stats, variant_pk = single_group_inner.variant_pk, variant_pk_data = single_group_inner.variant_pk_data, hide_header = true %}
+  {% include "partials/pk_group_inner_body.html" %}
+{% endwith %}
+</div>
 {% endif %}
 
 <h2>参数对比</h2>
+{% if compare.drift %}
+<div class="notice small">
+  <strong>部署记录不一致：</strong>
+  {% for c in compare.drift %}
+    <span class="mono">{{ c.config_name }}</span> 上有 {{ c.runs | selectattr("ok", "false") | selectattr("evidence") | list | length }} 个 run
+    导入时记录的 serve 命令/环境变量与该配置集当前展示的部署不同{% if not loop.last %}；{% endif %}
+  {% endfor %}
+  。这通常来自早期导入覆盖了配置集的部署信息，请以 run 详情里的 manifest 为准，并运行
+  <code>perf-viewer audit</code> 核对。
+</div>
+{% endif %}
 <p class="muted small">参数合并自：配置声明、serve 启动命令解析（短参数归一，如 -tp = tensor_parallel_size）、
   Docker 容器启动参数、模型环境变量。默认只展示所选配置间的差异项；配置较多时可勾选参与对比的配置。</p>
 <form method="get" action="" class="filter-form">

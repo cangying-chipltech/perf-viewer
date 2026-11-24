@@ -99,6 +99,33 @@ def cmd_seed(args) -> int:
     return 0
 
 
+def cmd_audit(args) -> int:
+    """Check that every configuration's deployment matches its runs' own records."""
+    from .audit import deploy_audit
+    from .db import get_db
+
+    with get_db() as conn:
+        report = deploy_audit(conn)
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        for mismatch in report["mismatched_runs"]:
+            print(f"run {mismatch['run']} · {mismatch['node']} · config "
+                  f"{mismatch['config_id']} {mismatch['config_name']}"
+                  f"{' (已剔除)' if mismatch['excluded'] else ''}")
+            if mismatch["serve_flags_differ"]:
+                print("  serve 参数不一致: " + ", ".join(mismatch["serve_flags_differ"]))
+            if mismatch["env_keys_differ"]:
+                print("  环境变量不一致: " + ", ".join(mismatch["env_keys_differ"]))
+            if mismatch["docker_differs"]:
+                print("  容器启动命令不一致")
+            if mismatch.get("invalid"):
+                print("  部署记录无法解析")
+        print("OK：所有 run 的部署记录与配置集一致" if report["ok"]
+              else f"发现 {len(report['mismatched_runs'])} 个 run 的部署记录与配置集不一致")
+    return 0 if report["ok"] else 1
+
+
 def cmd_serve(args) -> int:
     import uvicorn
     from . import config
@@ -122,6 +149,10 @@ def main(argv=None) -> int:
     p_seed = sub.add_parser("seed", help="初始目录种子 + 验收数据导入")
     p_seed.add_argument("--assets-dir", default="/home/cangying")
     p_seed.set_defaults(handler=cmd_seed)
+
+    p_audit = sub.add_parser("audit", help="检查配置集部署信息与各 run 记录是否一致")
+    p_audit.add_argument("--json", action="store_true")
+    p_audit.set_defaults(handler=cmd_audit)
 
     p_serve = sub.add_parser("serve", help="启动 Web 服务")
     p_serve.add_argument("--host", default=None)

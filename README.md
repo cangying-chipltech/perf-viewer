@@ -44,7 +44,8 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 - **场景** `scenario`：交付/调优目标，引用若干测试集合；持有最佳配置与评分参数。
 - **自定义对比场景**：`source_scenario_ids` 指向同模型的其他场景，对比时合并这些场景的 run（递归展开、去重）；`config_ids` 可限定参与对比的配置（空列表=全部，配置必须同模型）。run 仍只归属一个普通场景，因此同一配置可在多个场景出现。来源场景的 suite 会自动并入。
 - **测试集合** `suite`：命名 case 矩阵，可被多场景复用；`test_case` 含 params/weight。
-- **配置集** `config_set`：名称 + 参数 JSON，按**归一化参数指纹(sha256)** 去重自动新建，可人工合并/重命名。另持**部署信息** `deploy`（docker 启动命令 / 模型环境变量 / 模型启动命令 / 来源），不参与指纹。
+- **配置集** `config_set`：名称 + 参数 JSON，按**配置身份指纹(sha256)** 去重自动新建，可人工合并/重命名。
+  身份 = 归一化参数 ∪ serve 命令里实际生效的 flag（`api_key`/`token` 等敏感 flag 除外）∪ 模型环境变量 ∪ docker 启动命令，因此声明参数相同但 serve 命令/镜像/环境不同的两次部署不会静默合并，也不会覆盖彼此的部署记录；配置集的部署信息 `deploy` 只描述它自己的 run。
 - **节点** `node`：hostname/IP 标签。
 - **运行** `run`：模型×配置×节点×suite 的一次压测；`valid`/`excluded` 控制是否参与对比。
 - **case 结果** `case_result`：run 内逐 case 的归一化指标。
@@ -174,9 +175,12 @@ GET /api/skill/package?name=<name>      # 下载 zip（响应头 X-Checksum-SHA2
 perf-viewer import <dir|zip> --manifest m.json [--dry-run] [--base-url URL] [--token TOKEN]
 perf-viewer seed [--assets-dir DIR]
 perf-viewer serve [--host HOST] [--port PORT]
+perf-viewer audit [--json]
 ```
 
 `import` 将目录打包为 zip 调用 HTTP API；`--base-url/--token` 缺省从 `PERF_VIEWER_BASE_URL/PERF_VIEWER_TOKEN` 读取。
+
+`audit` 逐 run 比较它**导入时记录**的部署（`run.manifest.import_manifest.config.deploy`）与所属配置集当前展示的 `deploy`，发现不一致时退出码为 1。这类不一致只可能来自早期版本：那时配置指纹只看 params，相同 params、不同 serve 命令的导入会命中同一配置集，后一次导入再把 `deploy` 覆盖掉，页面就会把旧 run 展示成它没执行过的命令。读接口 `GET /api/deploy-audit` 返回同样内容，对比页也会给出提示。
 
 ### 远程结果
 
@@ -216,7 +220,7 @@ htmx/ECharts 已 vendor 到 `app/static/vendor/`；若 ECharts 缺失，图表�
 
 ## API 摘要
 
-- 读：`GET /api/models`、`/api/models/{m}`、`/api/models/{m}/scenarios`、`/api/scenarios/{id}`、`/api/scenarios/{id}/comparison?suite=&mode=same-node|adjusted|best`、`/api/runs/{id}`、`/api/artifacts/{id}`、`/api/catalog`、`/api/batches/{id}`、`/healthz`
+- 读：`GET /api/models`、`/api/models/{m}`、`/api/models/{m}/scenarios`、`/api/scenarios/{id}`、`/api/scenarios/{id}/comparison?suite=&mode=same-node|adjusted|best`、`/api/runs/{id}`、`/api/artifacts/{id}`、`/api/catalog`、`/api/batches/{id}`、`/api/deploy-audit`、`/healthz`
 - 写（token）：`POST /api/import`、`POST /api/scenarios/{id}/best`、`POST /api/runs/{id}/exclude`、`POST /api/configs/merge`、`POST /api/scenarios/{id}/runs`（批量指定 run 归属）、`POST /api/runs/{id}/scenario`（单个设置/清除归属）、目录场景 CRUD 支持 `source_scenario_ids` / `config_ids`、目录 CRUD `/api/catalog/...`（`PATCH /api/catalog/configs/{id}` 支持 `deploy` 字段）
 
 交互式文档：`/docs`。

@@ -102,7 +102,9 @@ class TestDeployImport:
             assert len(deploy["extra_cmds"]) == 2
             assert "sk-secret" not in cfg["deploy"]
 
-    def test_deploy_not_in_fingerprint(self, tmp_path):
+    def test_deploy_variant_gets_its_own_config(self, tmp_path):
+        # The deployment record is part of the configuration identity: a different
+        # docker/serve command must not relabel the runs imported before it.
         root = stage(tmp_path, "node_details.csv")
         m1 = json.loads(json.dumps(CSV_MANIFEST))
         m1["config"]["deploy"] = DEPLOY
@@ -110,19 +112,24 @@ class TestDeployImport:
         m2 = json.loads(json.dumps(CSV_MANIFEST))
         m2["config"]["deploy"] = {"docker_cmd": "docker run other"}
         report = import_runs(root, m2)
-        assert all(r["status"] == "duplicate" for r in report["runs"])
+        assert all(r["status"] == "imported" for r in report["runs"])
         with get_db() as conn:
-            assert conn.execute("SELECT COUNT(*) n FROM config_set").fetchone()["n"] == 1
-            cfg = conn.execute("SELECT * FROM config_set").fetchone()
-            assert json.loads(cfg["deploy"])["docker_cmd"] == "docker run other"
+            assert conn.execute("SELECT COUNT(*) n FROM config_set").fetchone()["n"] == 2
+            deploys = [json.loads(r["deploy"])["docker_cmd"]
+                       for r in conn.execute("SELECT deploy FROM config_set ORDER BY id")]
+            assert DEPLOY["docker_cmd"] in deploys
+            assert "docker run other" in deploys
 
     def test_reimport_without_deploy_preserves(self, tmp_path):
         root = stage(tmp_path, "node_details.csv")
         m1 = json.loads(json.dumps(CSV_MANIFEST))
         m1["config"]["deploy"] = DEPLOY
         import_runs(root, m1)
-        import_runs(root, CSV_MANIFEST)
+        report = import_runs(root, CSV_MANIFEST)
+        assert all(r["status"] == "duplicate" for r in report["runs"])
         with get_db() as conn:
+            assert conn.execute("SELECT COUNT(*) n FROM config_set").fetchone()["n"] == 1
+            assert conn.execute("SELECT COUNT(*) n FROM run").fetchone()["n"] == 4
             cfg = conn.execute("SELECT * FROM config_set").fetchone()
             assert json.loads(cfg["deploy"])["docker_cmd"] == DEPLOY["docker_cmd"]
 
@@ -133,18 +140,48 @@ class TestDeployImport:
         with pytest.raises(ImportError_, match="deploy"):
             import_runs(root, manifest)
 
-    def test_register_config_deploy_update(self, conn):
+    def test_register_config_deploy_conflict_creates_variant(self, conn):
+        # Different serve command with the same declared params must not rewrite the
+        # deployment record of the runs that used the previous command.
         model = resolve_model(conn, "m/x")
         cfg, created = register_config(conn, model["id"], "c", {"tp": 8},
                                        deploy={"serve_cmd": "vllm serve a"})
         assert created
         cfg2, created2 = register_config(conn, model["id"], "c", {"tp": 8},
                                          deploy={"serve_cmd": "vllm serve b"})
+        assert created2
+        assert cfg2["id"] != cfg["id"]
+        stored = conn.execute("SELECT * FROM config_set WHERE id = ?", (cfg["id"],)).fetchone()
+        assert json.loads(stored["deploy"])["serve_cmd"] == "vllm serve a"
+        assert json.loads(cfg2["deploy"])["serve_cmd"] == "vllm serve b"
+
+    def test_register_config_same_deploy_is_idempotent(self, conn):
+        model = resolve_model(conn, "m/x")
+        cfg, _ = register_config(conn, model["id"], "c", {"tp": 8},
+                                 deploy={"serve_cmd": "vllm serve a"})
+        cfg2, created2 = register_config(conn, model["id"], "c", {"tp": 8},
+                                         deploy={"serve_cmd": "vllm serve a"})
         assert not created2
         assert cfg2["id"] == cfg["id"]
-        assert json.loads(cfg2["deploy"])["serve_cmd"] == "vllm serve b"
-        cfg3, _ = register_config(conn, model["id"], "c", {"tp": 8})
-        assert json.loads(cfg3["deploy"])["serve_cmd"] == "vllm serve b"
+
+    def test_register_config_reordered_flags_is_idempotent(self, conn):
+        model = resolve_model(conn, "m/x")
+        cfg, _ = register_config(
+            conn, model["id"], "c", {"tp": 16, "block_size": 256},
+            deploy={"serve_cmd": "vllm serve /m -tp 16 --block-size 256"})
+        cfg2, created2 = register_config(
+            conn, model["id"], "c", {"tp": 16, "block_size": 256},
+            deploy={"serve_cmd": "vllm serve /m --block-size 256 -tp 16"})
+        assert not created2
+        assert cfg2["id"] == cfg["id"]
+
+    def test_register_config_keeps_deploy_without_incoming(self, conn):
+        model = resolve_model(conn, "m/x")
+        cfg, _ = register_config(conn, model["id"], "c", {"tp": 8},
+                                 deploy={"serve_cmd": "vllm serve a"})
+        cfg2, _ = register_config(conn, model["id"], "c", {"tp": 8})
+        assert cfg2["id"] == cfg["id"]
+        assert json.loads(cfg2["deploy"])["serve_cmd"] == "vllm serve a"
 
 
 class TestDeployApi:

@@ -92,6 +92,75 @@ def config_fingerprint(params: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+# Flags whose value is a secret: they must not take part in the identity hash.
+_SECRET_PARAM_KEYS = {"api_key", "api_token", "token", "hf_token"}
+
+
+def serve_params(serve_cmd: Any) -> dict[str, Any]:
+    """Explicit flags of the recorded serve command, without secrets or argv[0..].
+
+    The serve command is what actually ran, so these values belong to the
+    configuration identity even when the manifest's ``params`` is incomplete.
+    """
+    if not isinstance(serve_cmd, str) or not serve_cmd.strip():
+        return {}
+    try:
+        flags = parse_serve_flags(serve_cmd)
+    except ValueError:
+        return {}
+    flags.pop("_args", None)
+    return {k: v for k, v in flags.items() if k not in _SECRET_PARAM_KEYS}
+
+
+def _identity_env(env: Any) -> dict:
+    """Environment variables that carry information; ``***`` means "redacted/unknown"."""
+    if not isinstance(env, dict):
+        return {}
+    out = {}
+    for key, value in sorted(env.items()):
+        text = str(value)
+        if text == "***":
+            continue
+        out[str(key)] = _scalar(text)
+    return out
+
+
+def config_identity(params: Any, deploy: Any = None) -> tuple[str, dict]:
+    """Fingerprint a configuration by everything that defines the served model.
+
+    ``config_fingerprint`` only sees the declared parameters, which let a
+    configuration whose serve command switched cudagraph mode (or any other flag
+    that is not declared) collide with the previous one. The identity therefore
+    merges the declared parameters with the flags parsed from the recorded
+    ``deploy.serve_cmd`` and the exported model environment; the serve command
+    wins on conflicts because it is the record of what actually ran.
+
+    Returns ``(fingerprint, params_to_store)``. Without a deploy the result is
+    identical to ``config_fingerprint``.
+    """
+    merged: dict[str, Any] = {}
+    normalized = normalize_params(params) if params is not None else {}
+    if isinstance(normalized, dict):
+        merged.update(normalized)
+    else:
+        merged["_params"] = normalized
+    deploy_norm = normalize_deploy(deploy) if deploy else {}
+    merged.update(serve_params(deploy_norm.get("serve_cmd")))
+    payload: dict[str, Any] = {}
+    env = _identity_env(deploy_norm.get("env"))
+    if env:
+        payload["env"] = env
+    docker = " ".join(str(deploy_norm.get("docker_cmd") or "").split())
+    if docker:
+        payload["docker"] = docker
+    if not payload:
+        return config_fingerprint(merged), merged
+    payload["params"] = merged
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False,
+                           separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest(), merged
+
+
 def _normalize_env(env: Any) -> dict:
     """env 支持 dict、'K=V' 字符串列表、或多行/空格分隔的 K=V 文本。"""
     pairs: list[str] = []
@@ -203,20 +272,100 @@ def resolve_model(conn, name: str, aliases: list[str] | None = None) -> dict:
     return dict(conn.execute("SELECT * FROM model WHERE id = ?", (cur.lastrowid,)).fetchone())
 
 
+def _deploy_signature(deploy: dict) -> dict:
+    """Canonical deployment signature for the parts identity cannot fully cover.
+
+    Flags are order-independent and secrets/redacted env values are ignored, so a
+    redeclared command does not fork a config; positional serve arguments (the
+    model path, for example) still distinguish genuinely different deployments.
+    """
+    serve_cmd = str(deploy.get("serve_cmd") or "").strip()
+    args: list = []
+    flags: dict = {}
+    if serve_cmd:
+        try:
+            parsed = parse_serve_flags(serve_cmd)
+        except ValueError:
+            return {"serve_cmd": " ".join(serve_cmd.split())}
+        args = list(parsed.pop("_args", []) or [])
+        flags = {k: v for k, v in parsed.items() if k not in _SECRET_PARAM_KEYS}
+    return {
+        "serve_args": args,
+        "serve_flags": flags,
+        "docker_cmd": " ".join(str(deploy.get("docker_cmd") or "").split()),
+        "env": _identity_env(deploy.get("env")),
+    }
+
+
+def _params_cover_declared(stored: Any, declared: Any) -> bool:
+    """Whether stored (possibly deploy-merged) params cover an import's declared params."""
+    if isinstance(stored, dict) and isinstance(declared, dict):
+        return all(stored.get(key) == value for key, value in declared.items())
+    return stored == declared
+
+
+def _merge_deploy(current: dict, incoming: dict) -> dict:
+    """Keep the stored deployment, refreshing commands and appending extra_cmds."""
+    merged = dict(current)
+    for key, val in incoming.items():
+        if key == "extra_cmds" or val in (None, "", [], {}):
+            continue
+        merged[key] = val
+    extra = list(merged.get("extra_cmds") or [])
+    seen = {json.dumps(item, sort_keys=True, ensure_ascii=False) for item in extra}
+    for item in incoming.get("extra_cmds") or []:
+        marker = json.dumps(item, sort_keys=True, ensure_ascii=False)
+        if marker not in seen:
+            extra.append(item)
+            seen.add(marker)
+    if extra:
+        merged["extra_cmds"] = extra
+    return merged
+
+
 def register_config(conn, model_id: int, name: str, params: Any, notes: str | None = None,
                     deploy: Any = None):
-    fp = config_fingerprint(params)
+    """Register a configuration set, keyed by ``config_identity``.
+
+    A configuration is append-only evidence: if the same declared params arrive
+    with a different deployment record (another serve command, image or model
+    environment), the existing row is left untouched and a separate
+    configuration is registered. Overwriting it would relabel every run that was
+    imported earlier with a command it never ran.
+    """
+    deploy_norm = normalize_deploy(deploy) if deploy is not None else {}
+    fp, stored = config_identity(params, deploy_norm)
     row = conn.execute(
         "SELECT * FROM config_set WHERE model_id = ? AND fingerprint = ?", (model_id, fp)
     ).fetchone()
-    deploy_norm = normalize_deploy(deploy) if deploy is not None else {}
     if row:
-        if deploy_norm:
-            conn.execute("UPDATE config_set SET deploy = ? WHERE id = ?",
-                         (json.dumps(deploy_norm, ensure_ascii=False), row["id"]))
-            row = conn.execute("SELECT * FROM config_set WHERE id = ?", (row["id"],)).fetchone()
-        return dict(row), False
-    stored = normalize_params(params)
+        current = json.loads(row["deploy"] or "{}")
+        if deploy_norm and _deploy_signature(current) != _deploy_signature(deploy_norm):
+            salt = json.dumps(_deploy_signature(deploy_norm), sort_keys=True, ensure_ascii=False)
+            fp = hashlib.sha256((fp + salt).encode("utf-8")).hexdigest()
+            row = conn.execute(
+                "SELECT * FROM config_set WHERE model_id = ? AND fingerprint = ?",
+                (model_id, fp),
+            ).fetchone()
+        if row:
+            merged = _merge_deploy(json.loads(row["deploy"] or "{}"), deploy_norm)
+            if merged != json.loads(row["deploy"] or "{}"):
+                conn.execute("UPDATE config_set SET deploy = ? WHERE id = ?",
+                             (json.dumps(merged, ensure_ascii=False), row["id"]))
+            return dict(conn.execute("SELECT * FROM config_set WHERE id = ?",
+                                     (row["id"],)).fetchone()), False
+    if not deploy_norm:
+        # An import without a deployment record makes no claim about how the model
+        # was served. Reuse the single existing configuration with the same
+        # declared params instead of forking a params-only duplicate.
+        candidates = [
+            dict(other) for other in conn.execute(
+                "SELECT * FROM config_set WHERE model_id = ?", (model_id,)).fetchall()
+            if _params_cover_declared(
+                normalize_params(json.loads(other["params"] or "{}")), stored)
+        ]
+        if len(candidates) == 1:
+            return candidates[0], False
     base_name = name
     n = 1
     while True:

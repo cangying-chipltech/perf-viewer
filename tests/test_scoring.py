@@ -333,8 +333,8 @@ class TestPkGaps:
 
 
 class TestAggregateGroupPk:
-    def test_core_configs_aggregate_and_variants_pk(self, conn):
-        from app.web import build_config_groups, build_group_pk
+    def test_inner_top_variant_is_used_for_cross_group_pk(self, conn):
+        from app.web import build_config_groups, build_group_inner, build_group_pk
 
         model, suite, cases = make_catalog(conn, case_keys=("c1", "c2"))
         sid = make_scenario(conn, model, suite)
@@ -343,14 +343,14 @@ class TestAggregateGroupPk:
         make_run(conn, model, suite, [cases[0]], "A1",
                  {**core, "compilation_config": '{"cudagraph_mode":"FULL_DECODE_ONLY"}'},
                  "n1", [m(10, None)])
-        make_run(conn, model, suite, [cases[1]], "A2",
+        make_run(conn, model, suite, cases, "A2",
                  {**core, "compilation_config": '{"cudagraph_mode":"NONE"}'},
-                 "n1", [m(10, None)])
+                 "n1", [m(20, None), m(10, None)])
         make_run(conn, model, suite, cases, "B",
                  {"tensor_parallel_size": 8, "decode_context_parallel_size": 8,
                   "long_prefill_token_threshold": 1024,
                   "image": "vllm_glm:20261102_base1102"}, "n1",
-                 [m(20, None), m(20, None)])
+                 [m(30, None), m(30, None)])
 
         comp = load_comparison(conn, sid)
         groups = build_config_groups(comp)
@@ -359,7 +359,52 @@ class TestAggregateGroupPk:
         group_b = next(g for g in groups if any(c["name"] == "B" for c in g["configs"]))
         assert [c["name"] for c in group_a["configs"]] == ["A1", "A2"]
 
+        inner = build_group_inner(comp, group_a)
+        assert inner["top"]["name"] == "A1"
+        assert inner["top_score"] == 3.0
+        assert inner["top_stats"]["wins"] == 1
+        assert inner["top_stats"]["losses"] == 0
+
         gp = build_group_pk(comp, group_a, group_b)
-        assert gp["compared_count"] == 2
-        assert gp["wins"] == 2
-        assert len(gp["variant_pairs"]) == 2
+        assert gp["top_a"]["name"] == "A1"
+        assert gp["top_b"]["name"] == "B"
+        assert gp["compared_count"] == 1
+        assert gp["wins"] == 1
+        assert "variant_pairs" not in gp
+
+    def test_pk_view_marks_equal_case_scores_as_tie(self, conn):
+        from app.web import build_pk_view
+
+        model, suite, cases = make_catalog(conn, case_keys=("c1",))
+        sid = make_scenario(conn, model, suite)
+        make_run(conn, model, suite, cases, "A", {"v": 1}, "n1", [m(100.0, None)])
+        make_run(conn, model, suite, cases, "B", {"v": 2}, "n1", [m(100.5, None)])
+        comp = load_comparison(conn, sid)
+        ids = {comp["configs"][cid]["name"]: cid for cid in comp["configs"]}
+        pk = build_pk_view(comp, ids["A"], ids["B"])
+        assert pk["comparisons"][0]["status"] == "tie"
+        assert pk["ties"] == 1
+        assert pk["wins"] == pk["losses"] == 0
+
+
+class TestGroupComparePage:
+    def test_single_group_renders_inner_variant_pk(self, client, conn):
+        model, suite, cases = make_catalog(
+            conn, model_name="single/model", case_keys=("c1", "c2"))
+        sid = make_scenario(conn, model, suite)
+        core = {"tensor_parallel_size": 16, "decode_context_parallel_size": 4,
+                "long_prefill_token_threshold": 1024,
+                "image": "vllm_glm:20261102_base1102"}
+        make_run(conn, model, suite, [cases[0]], "A1",
+                 {**core, "compilation_config": '{"cudagraph_mode":"FULL_DECODE_ONLY"}'},
+                 "n1", [m(10, None)])
+        make_run(conn, model, suite, cases, "A2",
+                 {**core, "compilation_config": '{"cudagraph_mode":"NONE"}'},
+                 "n1", [m(20, None), m(10, None)])
+        conn.commit()
+
+        resp = client.get(f"/models/single%2Fmodel/scenarios/{sid}/compare")
+        assert resp.status_code == 200
+        assert "组内变体 PK 矩阵（仅 1 个聚合配置组）" in resp.text
+        assert "组内 Top" in resp.text
+        assert "A1" in resp.text

@@ -92,6 +92,14 @@ def api_artifact(artifact_id: int, download: bool = Query(default=False)):
     return FileResponse(path, media_type=media, filename=filename)
 
 
+@router.get("/deploy-audit")
+def api_deploy_audit():
+    """Every configuration must describe the deployments its runs actually used."""
+    from ..audit import deploy_audit
+    with get_db() as conn:
+        return deploy_audit(conn)
+
+
 @router.get("/catalog")
 def api_catalog():
     with get_db() as conn:

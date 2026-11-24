@@ -1,0 +1,60 @@
+{% if group %}
+  {% if not hide_header %}
+  <h4>聚合配置内部变体 PK：<span class="mono">{{ group.label }}</span></h4>
+  {% endif %}
+  <p class="muted small">该聚合配置包含 {{ group.configs | length }} 个变体。此矩阵仅比较被聚合的配置本身，
+    用于选出代表该组参与跨组 PK 的 Top 变体。
+    {% if top %}组内 Top：<span class="mono">{{ top.name }}</span>{% if top_score is not none %}
+    （组内得分 {{ top_score | fmt }}，胜 {{ top_stats.wins }} / 负 {{ top_stats.losses }} / 平 {{ top_stats.ties }}，
+    {{ top_stats.compared }} 个测试项）{% endif %}。{% endif %}</p>
+  {% if group.configs | length < 2 %}
+  <p class="empty">该聚合配置只有 1 个变体，没有组内 PK。</p>
+  {% else %}
+  <div class="table-wrap">
+  <table class="pk-matrix">
+    <thead>
+      <tr><th>变体 A ＼ 变体 B</th>
+        {% for v in group.configs %}<th class="mono">
+          {% if v.id == top.id %}<span class="badge valid">Top</span> {% endif %}{{ v.name }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+    {% for row in matrix_rows %}
+      <tr>
+        <th class="mono">
+          {% if row.variant.id == top.id %}<span class="badge valid">Top</span> {% endif %}{{ row.variant.name }}</th>
+        {% for cell in row.cells %}
+          {% if cell.lower %}
+            <td class="cell stair-empty"></td>
+          {% elif cell.self %}
+            <td class="cell self">—</td>
+          {% else %}
+            <td class="cell">
+              <a href="#" class="pk-cell"
+                 hx-get="/partials/scenarios/{{ scenario_id }}/pk_variant?pk_a={{ row.variant.id }}&pk_b={{ cell.b.id }}"
+                 hx-target="#inner-variant-pk" hx-swap="innerHTML">
+                {% if cell.has_pk %}A胜 {{ cell.wins }} · B胜 {{ cell.losses }} · 平 {{ cell.ties }}
+                  <span class="muted small">（{{ cell.compared_count }} 个测试项）</span>
+                {% else %}<span class="muted">未 PK</span>{% endif %}
+              </a>
+            </td>
+          {% endif %}
+        {% endfor %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div id="inner-variant-pk">
+    {% if variant_pk %}
+      {% with pk = variant_pk, pk_data = variant_pk_data %}
+        {% include "partials/pk_detail_body.html" %}
+      {% endwith %}
+    {% else %}
+      <p class="empty">无组内 PK 数据。</p>
+    {% endif %}
+  </div>
+  {% endif %}
+{% else %}
+  <p class="empty">未找到对应的聚合配置。</p>
+{% endif %}

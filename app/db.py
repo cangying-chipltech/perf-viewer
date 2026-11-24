@@ -4,7 +4,7 @@ from pathlib import Path
 
 from . import config
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 MIGRATIONS: dict[int, list[str]] = {
     2: [
@@ -26,6 +26,7 @@ MIGRATIONS: dict[int, list[str]] = {
     7: [
         "ALTER TABLE scenario ADD COLUMN config_ids TEXT NOT NULL DEFAULT '[]'",
     ],
+    8: [],
 }
 
 
@@ -134,6 +135,14 @@ def init_db() -> None:
                     conn.execute(stmt)
             _backfill_run_scenarios(conn)
             assign_legacy_scenarios(conn)
+            if version < 8:
+                # Configuration identity now covers the deployment record as well
+                # (serve flags + env), so legacy fingerprints must be recomputed
+                # and run signatures follow them.
+                from .audit import recompute_config_identity
+                from .importer import refresh_run_signatures
+                recompute_config_identity(conn)
+                refresh_run_signatures(conn)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.execute("COMMIT")
         from .entities import seed_metric_defs

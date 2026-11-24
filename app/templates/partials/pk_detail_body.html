@@ -1,6 +1,9 @@
 {% if pk and pk.a and pk.b %}
   <p class="muted small">当前展示：<span class="mono">A = {{ pk.a.name }}</span>
-    vs <span class="mono">B = {{ pk.b.name }}</span>。判定使用与排名相同的 pairwise case 得分。</p>
+    vs <span class="mono">B = {{ pk.b.name }}</span>
+    {% if pk.top_a %}（A 组内 Top = <span class="mono">{{ pk.top_a.name }}</span>，
+    B 组内 Top = <span class="mono">{{ pk.top_b.name }}</span>）{% endif %}。
+    判定使用与排名相同的 pairwise case 得分。</p>
   {% if pk.same %}
   <p class="notice">请选择两个不同配置进行 PK。</p>
   {% elif pk.compared_count %}

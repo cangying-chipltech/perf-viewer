@@ -1,23 +1,27 @@
 <div id="pk-detail">
 {% if pk %}
-  <h4>聚合配置 PK：<span class="mono">{{ pk.a.name }}</span>
+  <h4>跨组 PK（各组 Top 变体）：<span class="mono">{{ pk.a.name }}</span>
     vs <span class="mono">{{ pk.b.name }}</span></h4>
+  <p class="muted small">A 组内 Top：<span class="mono">{{ pk.top_a.name }}</span>；
+    B 组内 Top：<span class="mono">{{ pk.top_b.name }}</span>。</p>
   {% include "partials/pk_detail_body.html" %}
 
-  <h5>变体差异 PK 矩阵</h5>
+  <h5>变体差异 PK 矩阵（仅参考，不参与跨组判定）</h5>
   <p class="muted small">行 = A 的变体，列 = B 的变体；点击单元格直接查看该变体对的 PK 图表
     （会替换上方图表）。</p>
   <div class="table-wrap">
   <table class="pk-matrix">
     <thead>
       <tr><th>变体 A ＼ 变体 B</th>
-        {% for vb in pk.variants_b %}<th class="mono">{{ vb.name }}</th>{% endfor %}
+        {% for vb in pk.variants_b %}<th class="mono">
+          {% if vb.id == pk.top_b.id %}<span class="badge valid">Top</span> {% endif %}{{ vb.name }}</th>{% endfor %}
       </tr>
     </thead>
     <tbody>
     {% for row in variant_rows %}
       <tr>
-        <th class="mono">{{ row.variant.name }}</th>
+        <th class="mono">
+          {% if row.variant.id == pk.top_a.id %}<span class="badge valid">Top</span> {% endif %}{{ row.variant.name }}</th>
         {% for cell in row.cells %}
           <td class="cell">
             {% if cell %}

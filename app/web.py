@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.templating import Jinja2Templates
 
 from . import config
+from .audit import deploy_audit
 from .db import get_db
 from .entities import normalize_params, parse_serve_flags
 from .groups import group_configs
@@ -236,10 +237,12 @@ def build_pk_view(comp: dict, a_id: int, b_id: int) -> dict:
             if pw is None:
                 no_common += 1
                 continue
-            score = pw["case_score"] if pw["a"] == a_id else pw["case_score_b"]
-            if score > 0.5 + 1e-9:
+            score_a = (pw["case_score"] if pw["a"] == a_id else pw["case_score_b"])
+            score_b = (pw["case_score_b"] if pw["a"] == a_id else pw["case_score"])
+            score = score_a
+            if score_a > score_b + 1e-9:
                 status = "win"
-            elif score < 0.5 - 1e-9:
+            elif score_a < score_b - 1e-9:
                 status = "loss"
             else:
                 status = "tie"
@@ -247,7 +250,8 @@ def build_pk_view(comp: dict, a_id: int, b_id: int) -> dict:
                 "suite": skey, "case_key": case["case_key"],
                 "label": f"{skey}/{case['case_key']}", "case_id": case["id"],
                 "detail_a": a_id, "detail_b": b_id,
-                "score": score, "status": status,
+                "score": score, "score_a": score_a, "score_b": score_b,
+                "status": status,
             })
     wins = sum(1 for c in comparisons if c["status"] == "win")
     losses = sum(1 for c in comparisons if c["status"] == "loss")
@@ -271,69 +275,113 @@ def build_config_groups(comp: dict) -> list[dict]:
     return group_configs([comp["configs"][cid] for cid in ids])
 
 
-def _pk_status(score: float) -> str:
-    if score > 0.5 + 1e-9:
-        return "win"
-    if score < 0.5 - 1e-9:
-        return "loss"
-    return "tie"
-
-
-def _group_coverage(comp: dict, group: dict) -> list[tuple[str, int]]:
-    ids = {c["id"] for c in group["configs"]}
-    cov: dict[str, int] = {}
+def _case_weights(comp: dict) -> dict[int, float]:
+    weights: dict[int, float] = {}
     for suite_out in comp["suites"]:
-        skey = suite_out["suite"]["key"]
         for case_out in suite_out["cases"]:
-            if any(case_out["cells"].get(cid) for cid in ids):
-                cov[skey] = cov.get(skey, 0) + 1
-    return sorted(cov.items())
+            weight = case_out["case"]["weight"]
+            weights[case_out["case"]["id"]] = float(1.0 if weight is None else weight)
+    return weights
 
 
-def build_group_pk(comp: dict, ga: dict, gb: dict) -> dict:
-    """聚合配置 A vs B：对变体对的实际 pairwise 结果按 case 取均值。"""
-    by_case: dict = {}
-    variant_pairs = []
-    for va in ga["configs"]:
-        for vb in gb["configs"]:
-            pk = build_pk_view(comp, va["id"], vb["id"])
-            variant_pairs.append({
-                "a": va, "b": vb,
-                "compared_count": pk["compared_count"],
-                "wins": pk["wins"], "losses": pk["losses"], "ties": pk["ties"],
-                "has_pk": pk["compared_count"] > 0,
-            })
-            for item in pk["comparisons"]:
-                key = (item["suite"], item["case_key"])
-                by_case.setdefault(key, []).append(item)
-    comparisons = []
-    for (suite, case_key), items in by_case.items():
-        score = sum(i["score"] for i in items) / len(items)
-        sample = items[0]
-        comparisons.append({
-            "suite": suite, "case_key": case_key,
-            "label": f"{suite}/{case_key}", "case_id": sample.get("case_id"),
-            "detail_a": sample.get("detail_a"), "detail_b": sample.get("detail_b"),
-            "score": score, "status": _pk_status(score),
-            "variants": len(items),
-        })
-    comparisons.sort(key=lambda c: (c["suite"], c["case_key"]))
-    wins = sum(1 for c in comparisons if c["status"] == "win")
-    losses = sum(1 for c in comparisons if c["status"] == "loss")
-    ties = sum(1 for c in comparisons if c["status"] == "tie")
+def build_group_inner(comp: dict, group: dict) -> dict:
+    """组内变体两两 PK，选出代表该聚合配置参与跨组对比的 Top 变体。"""
+    variants = group["configs"]
+    weights = _case_weights(comp)
+    stats = {
+        v["id"]: {"weighted_sum": 0.0, "weight_sum": 0.0,
+                  "wins": 0, "losses": 0, "ties": 0, "compared": 0,
+                  "coverage": sum(
+                      1 for suite_out in comp["suites"]
+                      for case_out in suite_out["cases"]
+                      if case_out["cells"].get(v["id"]))}
+        for v in variants
+    }
+    per_case: dict[int, dict[int, list[float]]] = {v["id"]: {} for v in variants}
+    pair_pks: dict[tuple[int, int], dict] = {}
+    matrix_rows = []
+    for i, va in enumerate(variants):
+        cells = []
+        for j, vb in enumerate(variants):
+            if j < i:
+                cells.append({"lower": True})
+            elif j == i:
+                cells.append({"self": True})
+            else:
+                pk = build_pk_view(comp, va["id"], vb["id"])
+                pair_pks[(va["id"], vb["id"])] = pk
+                for item in pk["comparisons"]:
+                    per_case[va["id"]].setdefault(item["case_id"], []).append(item["score_a"])
+                    per_case[vb["id"]].setdefault(item["case_id"], []).append(item["score_b"])
+                for vid, wins, losses in (
+                        (va["id"], pk["wins"], pk["losses"]),
+                        (vb["id"], pk["losses"], pk["wins"])):
+                    stats[vid]["wins"] += wins
+                    stats[vid]["losses"] += losses
+                    stats[vid]["ties"] += pk["ties"]
+                    stats[vid]["compared"] += pk["compared_count"]
+                cells.append({
+                    "b": vb, "compared_count": pk["compared_count"],
+                    "wins": pk["wins"], "losses": pk["losses"], "ties": pk["ties"],
+                    "has_pk": pk["compared_count"] > 0,
+                })
+        matrix_rows.append({"variant": va, "cells": cells})
+
+    for vid, cases in per_case.items():
+        for case_id, scores in cases.items():
+            weight = weights.get(case_id, 1.0)
+            stats[vid]["weighted_sum"] += weight * (sum(scores) / len(scores))
+            stats[vid]["weight_sum"] += weight
+    for item in stats.values():
+        item["score"] = (item["weighted_sum"] / item["weight_sum"]
+                         if item["weight_sum"] else None)
+
+    scored = [v for v in variants if stats[v["id"]]["score"] is not None]
+    pool = scored or variants
+    top = min(pool, key=lambda v: (
+        -(stats[v["id"]]["score"] if stats[v["id"]]["score"] is not None else 0.0),
+        -stats[v["id"]]["compared"], -stats[v["id"]]["coverage"], v["name"]))
+    top_stats = stats[top["id"]]
+
+    default_pk = None
+    if pair_pks:
+        default_pk = max(pair_pks.values(), key=lambda pk: pk["compared_count"])
+    return {
+        "group": group, "variants": variants, "matrix_rows": matrix_rows,
+        "stats": stats, "top": top, "top_score": top_stats["score"],
+        "top_stats": top_stats, "variant_pk": default_pk,
+        "variant_pk_data": [
+            {"label": c["label"], "score": c["score"], "status": c["status"]}
+            for c in (default_pk["comparisons"] if default_pk else [])
+        ],
+    }
+
+
+def build_group_pk(comp: dict, ga: dict, gb: dict,
+                   inner_a: dict | None = None,
+                   inner_b: dict | None = None) -> dict:
+    """聚合配置 A vs B：各组先按组内 PK 选出 Top 变体，再由 Top 变体 PK。"""
+    inner_a = inner_a or build_group_inner(comp, ga)
+    inner_b = inner_b or build_group_inner(comp, gb)
+    top_a, top_b = inner_a["top"], inner_b["top"]
+    pk = build_pk_view(comp, top_a["id"], top_b["id"])
     return {
         "a": {"id": ga["id"], "name": ga["label"]},
         "b": {"id": gb["id"], "name": gb["label"]},
-        "comparisons": comparisons, "compared_count": len(comparisons),
-        "wins": wins, "losses": losses, "ties": ties, "no_common": 0,
-        "coverage_a": _group_coverage(comp, ga),
-        "coverage_b": _group_coverage(comp, gb),
-        "same": False, "variant_pairs": variant_pairs,
+        "top_a": top_a, "top_b": top_b,
+        "comparisons": pk["comparisons"], "compared_count": pk["compared_count"],
+        "wins": pk["wins"], "losses": pk["losses"], "ties": pk["ties"],
+        "no_common": pk["no_common"],
+        "coverage_a": pk["coverage_a"], "coverage_b": pk["coverage_b"],
+        "same": False,
         "variants_a": ga["configs"], "variants_b": gb["configs"],
     }
 
 
-def build_group_matrix(comp: dict, groups: list[dict]) -> dict:
+def build_group_matrix(comp: dict, groups: list[dict],
+                       inners: dict[int, dict] | None = None) -> dict:
+    if not inners:
+        inners = {g["id"]: build_group_inner(comp, g) for g in groups}
     rows = []
     for i, ga in enumerate(groups):
         cells = []
@@ -343,14 +391,38 @@ def build_group_matrix(comp: dict, groups: list[dict]) -> dict:
             elif j < i:
                 cells.append({"lower": True})
             else:
-                pk = build_group_pk(comp, ga, gb)
+                pk = build_group_pk(comp, ga, gb,
+                                    inners.get(ga["id"]), inners.get(gb["id"]))
                 cells.append({
                     "group_id": gb["id"], "compared_count": pk["compared_count"],
                     "wins": pk["wins"], "losses": pk["losses"], "ties": pk["ties"],
                     "has_pk": pk["compared_count"] > 0,
+                    "top_a": pk["top_a"]["name"], "top_b": pk["top_b"]["name"],
                 })
         rows.append({"group": ga, "cells": cells})
-    return {"groups": groups, "rows": rows}
+    return {
+        "groups": groups, "rows": rows,
+        "top_names": {
+            g["id"]: (inners.get(g["id"]) or build_group_inner(comp, g))["top"]["name"]
+            for g in groups
+        },
+    }
+
+
+def build_group_variant_rows(comp: dict, ga: dict, gb: dict) -> list[dict]:
+    """跨组详情里的变体差异矩阵（仅参考，不参与跨组判定）。"""
+    rows = []
+    for va in ga["configs"]:
+        cells = []
+        for vb in gb["configs"]:
+            pk = build_pk_view(comp, va["id"], vb["id"])
+            cells.append({
+                "b": vb, "compared_count": pk["compared_count"],
+                "wins": pk["wins"], "losses": pk["losses"], "ties": pk["ties"],
+                "has_pk": pk["compared_count"] > 0,
+            })
+        rows.append({"variant": va, "cells": cells})
+    return rows
 
 
 def build_pk_matrix(comp: dict) -> dict:
@@ -910,22 +982,31 @@ def page_scenario_compare(request: Request, name: str, scenario_id: int,
     with get_db() as conn:
         ctx = _scenario_context(conn, scenario_id, suite, mode)
         model = model_detail(conn, name)
-    ctx["mode"] = mode
-    all_ids = ctx["scenario_config_ids"]
-    requested = [cid for cid in (configs or []) if cid in all_ids]
-    selected_ids = requested or all_ids
+        ctx["mode"] = mode
+        all_ids = ctx["scenario_config_ids"]
+        requested = [cid for cid in (configs or []) if cid in all_ids]
+        selected_ids = requested or all_ids
+        drift = [c for c in deploy_audit(conn, selected_ids)["configs"]
+                 if any(item["evidence"] and not item["ok"] for item in c["runs"])]
     compare = deploy_compare_view(ctx["comp"], selected_ids, diff=bool(diff))
     compare["selectable"] = ctx["selectable_configs"]
     compare["selected_ids"] = selected_ids
+    compare["drift"] = drift
     ctx["compare"] = compare
 
     groups = build_config_groups(ctx["comp"])
+    inners = {g["id"]: build_group_inner(ctx["comp"], g) for g in groups}
     ctx["groups"] = groups
-    ctx["group_matrix"] = build_group_matrix(ctx["comp"], groups)
+    ctx["group_tops"] = [inners[g["id"]] for g in groups]
+    ctx["has_group_variants"] = any(len(g["configs"]) > 1 for g in groups)
+    ctx["group_matrix"] = build_group_matrix(ctx["comp"], groups, inners)
+    ctx["single_group_inner"] = (
+        ctx["group_tops"][0] if len(groups) == 1 else None)
     best = None
     for i, ga in enumerate(groups):
         for gb in groups[i + 1:]:
-            gp = build_group_pk(ctx["comp"], ga, gb)
+            gp = build_group_pk(ctx["comp"], ga, gb,
+                                inners[ga["id"]], inners[gb["id"]])
             if best is None or gp["compared_count"] > best["compared_count"]:
                 best = gp
     ctx["group_pk"] = best
@@ -1057,38 +1138,13 @@ def partial_pk_group_inner(request: Request, scenario_id: int, g: int = Query(..
             "group": None, "matrix_rows": [], "variant_pk": None,
             "variant_pk_data": [], "scenario_id": scenario_id,
         })
-    variants = group["configs"]
-    matrix_rows = []
-    for i, va in enumerate(variants):
-        cells = []
-        for j, vb in enumerate(variants):
-            if j < i:
-                cells.append({"lower": True})
-            elif j == i:
-                cells.append({"self": True})
-            else:
-                pk = build_pk_view(comp, va["id"], vb["id"])
-                cells.append({
-                    "b": vb, "compared_count": pk["compared_count"],
-                    "wins": pk["wins"], "losses": pk["losses"], "ties": pk["ties"],
-                    "has_pk": pk["compared_count"] > 0,
-                })
-        matrix_rows.append({"variant": va, "cells": cells})
-    default = None
-    if len(variants) > 1:
-        candidates = [(va, vb) for i, va in enumerate(variants) for vb in variants[i + 1:]]
-        default = max(candidates, key=lambda pair: build_pk_view(
-            comp, pair[0]["id"], pair[1]["id"])["compared_count"], default=candidates[0])
-    variant_pk = variant_pk_data = None
-    if default:
-        variant_pk = build_pk_view(comp, default[0]["id"], default[1]["id"])
-        variant_pk_data = [
-            {"label": c["label"], "score": c["score"], "status": c["status"]}
-            for c in variant_pk["comparisons"]
-        ]
+    inner = build_group_inner(comp, group)
     return templates.TemplateResponse(request, "partials/pk_group_inner.html", {
-        "group": group, "matrix_rows": matrix_rows, "variant_pk": variant_pk,
-        "variant_pk_data": variant_pk_data, "scenario_id": scenario_id,
+        "group": group, "matrix_rows": inner["matrix_rows"],
+        "top": inner["top"], "top_score": inner["top_score"],
+        "top_stats": inner["top_stats"],
+        "variant_pk": inner["variant_pk"],
+        "variant_pk_data": inner["variant_pk_data"], "scenario_id": scenario_id,
     })
 
 
@@ -1106,13 +1162,7 @@ def partial_pk_group(request: Request, scenario_id: int,
             "variant_pk_data": [], "scenario_id": scenario_id,
         })
     gp = build_group_pk(comp, group_a, group_b)
-    pair_map = {(p["a"]["id"], p["b"]["id"]): p for p in gp["variant_pairs"]}
-    variant_rows = []
-    for va in gp["variants_a"]:
-        cells = []
-        for vb in gp["variants_b"]:
-            cells.append(pair_map.get((va["id"], vb["id"])))
-        variant_rows.append({"variant": va, "cells": cells})
+    variant_rows = build_group_variant_rows(comp, group_a, group_b)
     pk_data = [
         {"label": c["label"], "score": c["score"], "status": c["status"]}
         for c in gp["comparisons"]
