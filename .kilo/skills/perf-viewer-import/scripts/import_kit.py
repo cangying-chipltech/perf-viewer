@@ -6,16 +6,29 @@
   import_kit.py evalscope --summary benchmark_summary.json --out ./import/run1 ...
   import_kit.py benchmark-suite --summary summary.json --config config.json --out ./import/run1 ...
 
-生成 <out>/normalized.json 与 <out>/manifest.json，然后:
+每次转换都会把本次执行的原始产物归档进 <out>（benchmark-suite 原始摘要/case 命令、
+vllm-bench/evalscope 源文件），并在给出 --deploy-execution / --deploy-dir 时把
+服务端启动文件（docker run / vllm serve / ray start 的 commands/*.executed.sh 与
+summary.json）归档到 <out>/server-start/。导入时这些文件作为 run 产物上传，
+perf-viewer 会长期保留在 data/artifacts 下，可在 run 详情页下载。
+
+生成 <out>/normalized.json、<out>/manifest.json 与 <out>/archive.json（归档索引），然后:
   cd /home/cangying/perf-viewer
   .venv/bin/python -m app.cli import <out> --manifest <out>/manifest.json --dry-run
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
+import re
 import shutil
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 SECONDARY_IMAGE_SUFFIXES = ("_with_ray",)
@@ -82,6 +95,189 @@ def image_from_docker_cmd(cmd: str) -> str:
     return tokens[-1] if tokens else ""
 
 
+# --------------------------------------------------------------- 执行归档
+# 每次转换都把原始用例结果与服务端启动文件一并放进输出目录；perf-viewer 导入时
+# 未经适配器消费的文件会落成 run 产物（data/artifacts），因此这些文件就随导入归档。
+
+ARCHIVE_DIR = "server-start"
+RAW_DIR = "benchmark-suite"
+RESULT_DIR = "raw-results"
+_SAFE_EXECUTION_ID = re.compile(r"[A-Za-z0-9_.-]+")
+DEFAULT_SERVICE_PORT = "18729"
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _archive_copy(out: Path, src: Path, rel: str) -> str:
+    """把 src 复制到 out/rel；返回相对 out 的路径。"""
+    src = Path(src)
+    if not src.is_file():
+        die(f"归档文件不存在: {src}")
+    dest = Path(out) / rel
+    if dest.exists() and dest.resolve() == src.resolve():
+        return dest.relative_to(out).as_posix()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    return dest.relative_to(out).as_posix()
+
+
+def _archive_dir(out: Path, src: Path, rel: str) -> list[str]:
+    """把目录内容复制到 out/rel；返回相对 out 的文件路径列表。"""
+    src = Path(src)
+    if not src.exists():
+        die(f"归档路径不存在: {src}")
+    written: list[str] = []
+    if src.is_file():
+        return [_archive_copy(out, src, Path(rel) / src.name)]
+    for path in sorted(src.rglob("*")):
+        if not path.is_file():
+            continue
+        sub = path.relative_to(src)
+        written.append(_archive_copy(out, path, str(Path(rel) / sub)))
+    return written
+
+
+def is_startup_file(name: str) -> bool:
+    """部署执行里属于服务端启动的文件：容器启动、vllm serve、ray start。"""
+    return name == "summary.json" or (name.startswith("commands/") and name.endswith(".sh"))
+
+
+def _service_urls(values: list[str] | None) -> list[str]:
+    urls: list[str] = []
+    for value in values or []:
+        url = str(value or "").strip().rstrip("/")
+        if not url:
+            continue
+        if not url.startswith(("http://", "https://")):
+            die(f"--service-url 需要 http(s) 地址: {url}")
+        if url not in urls:
+            urls.append(url)
+    if urls:
+        return urls
+    for name in ("PROFILE_SERVICE_URL", "PROFILE_SERVICE_LOCAL_URL"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return [value.rstrip("/")]
+    port = os.environ.get("PROFILE_SERVICE_PORT", DEFAULT_SERVICE_PORT).strip() or DEFAULT_SERVICE_PORT
+    return [f"http://127.0.0.1:{port}"]
+
+
+def _service_get(base: str, path: str, timeout: float = 60.0) -> dict:
+    request = urllib.request.Request(base + path, headers={"Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        raise RuntimeError(f"{base}{path}: HTTP {exc.code}") from None
+    except (urllib.error.URLError, OSError) as exc:
+        raise RuntimeError(f"{base}{path}: {exc}") from None
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{base}{path}: 返回的不是合法 JSON ({exc})") from None
+    if not isinstance(data, dict):
+        raise RuntimeError(f"{base}{path}: 返回的不是 JSON 对象")
+    return data
+
+
+def fetch_server_start(out: Path, execution_id: str, urls: list[str]) -> dict:
+    """从 profile-service 拉取一个部署执行的启动命令并归档到 <out>/server-start/。"""
+    execution_id = str(execution_id or "").strip()
+    if not _SAFE_EXECUTION_ID.fullmatch(execution_id):
+        die(f"--deploy-execution 非法 id: {execution_id!r}")
+    errors: list[str] = []
+    for base in urls:
+        exec_path = urllib.parse.quote(execution_id, safe="")
+        try:
+            listing = _service_get(base, f"/api/executions/{exec_path}/logs")
+        except RuntimeError as exc:
+            errors.append(str(exc))
+            continue
+        names = [str(name) for name in (listing.get("files") or [])]
+        wanted = sorted(name for name in names if is_startup_file(name))
+        if not wanted:
+            errors.append(f"{base}: 执行 {execution_id} 没有启动命令文件")
+            continue
+        written: list[str] = []
+        for name in wanted:
+            parts = Path(name).parts
+            if Path(name).is_absolute() or ".." in parts:
+                die(f"部署执行返回了不安全的文件路径: {name}")
+            try:
+                response = _service_get(
+                    base, f"/api/executions/{exec_path}/logs/{urllib.parse.quote(name, safe='')}"
+                )
+            except RuntimeError as exc:
+                errors.append(str(exc))
+                written = []
+                break
+            content = response.get("content")
+            if not isinstance(content, str):
+                errors.append(f"{base}: {name} 没有可下载内容")
+                written = []
+                break
+            dest = Path(out) / ARCHIVE_DIR / execution_id / name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+            written.append(dest.relative_to(out).as_posix())
+        if written:
+            return {"execution": execution_id, "service": base, "files": written}
+        if not errors:
+            errors.append(f"{base}: 执行 {execution_id} 的启动命令读取失败")
+    die("无法归档服务端启动文件: " + "; ".join(errors))
+
+
+def archive_sources(out: Path, args) -> dict:
+    """归档服务端启动文件（部署执行 / 部署目录），返回写入 archive.json 的段落。"""
+    started: list[dict] = []
+    urls = _service_urls(args.service_url)
+    for execution_id in args.deploy_execution or []:
+        started.append(fetch_server_start(out, execution_id, urls))
+    for directory in args.deploy_dir or []:
+        src = Path(directory).expanduser()
+        written = _archive_dir(out, src, str(Path(ARCHIVE_DIR) / src.name))
+        started.append({"dir": str(src), "files": written})
+    return {"server_start": started}
+
+
+def write_archive_index(out: Path, meta: dict) -> Path:
+    """写 <out>/archive.json：本次执行归档了哪些文件，带大小与 sha256。"""
+    out = Path(out)
+    files = []
+    for path in sorted(out.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(out).as_posix()
+        if rel in {"normalized.json", "manifest.json", "archive.json"}:
+            continue
+        files.append({"path": rel, "size": path.stat().st_size, "sha256": _sha256(path)})
+    payload = {
+        "archived_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        **meta,
+        "files": files,
+    }
+    target = out / "archive.json"
+    target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return target
+
+
+def archive_execution(out: Path, args, raw_files: list[tuple[Path, str]]) -> None:
+    """完成一次转换的归档：原始结果 + 服务端启动文件 + archive.json。"""
+    raw: list[str] = []
+    if args.archive_raw:
+        for src, rel in raw_files:
+            if Path(src).is_file():
+                raw.append(_archive_copy(out, src, rel))
+    meta: dict = {"execution": args.execution or None, "raw": raw}
+    meta.update(archive_sources(out, args))
+    write_archive_index(out, meta)
+
+
 def common_parser(suite_default: str) -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(add_help=False)
     p.add_argument("--out", required=True, help="输出目录（生成 normalized.json / manifest.json）")
@@ -99,6 +295,8 @@ def common_parser(suite_default: str) -> argparse.ArgumentParser:
     p.add_argument("--docker-cmd", default="", help="服务端 docker run 命令")
     p.add_argument("--serve-cmd", default="", help="服务端 vllm serve 命令")
     p.add_argument("--env", action="append", default=[], help="服务端环境变量 K=V，可重复")
+    p.add_argument("--bench-cmd", action="append", default=[],
+                   help="压测复现命令，'title::cmd' 或只给 cmd，可重复；写入 config.deploy.extra_cmds")
     p.add_argument("--source", default="", help="来源说明，如 profile-service execution id")
     p.add_argument("--notes", default="")
     p.add_argument("--repro-cmd", default="",
@@ -108,6 +306,17 @@ def common_parser(suite_default: str) -> argparse.ArgumentParser:
     p.add_argument("--case-console-log", action="append", default=[],
                    help="case 级 console.log KEY=PATH，可重复；文件会复制进输出目录并在 run 详情页按 case 展示")
     p.add_argument("--copy", action="append", default=[], help="额外复制进输出目录的文件/目录")
+    p.add_argument("--execution", default="", help="本次压测执行 id，写进 archive.json 便于回溯")
+    p.add_argument("--deploy-execution", action="append", default=[],
+                   help="部署执行 id，可重复；自动从 profile-service 拉取容器/vllm/ray 启动命令归档到 <out>/server-start/")
+    p.add_argument("--service-url", action="append", default=[],
+                   help="profile-service 地址，可重复（多机 Ray 时传对端节点）；默认 $PROFILE_SERVICE_URL")
+    p.add_argument("--deploy-dir", action="append", default=[],
+                   help="已下载的部署日志目录，可重复；整目录归档到 <out>/server-start/<目录名>/")
+    p.add_argument("--archive-raw", dest="archive_raw", action="store_true", default=True,
+                   help="归档本次执行的原始用例结果（默认开启）")
+    p.add_argument("--no-archive-raw", dest="archive_raw", action="store_false",
+                   help="不归档原始用例结果，只上传指标")
     return p
 
 
@@ -128,6 +337,18 @@ def write_payload(args, cases: list[dict], meta: dict) -> Path:
         deploy["env"] = env
     if args.source:
         deploy["source"] = args.source
+    bench_cmds = []
+    for item in args.bench_cmd or []:
+        title, sep, cmd = item.partition("::")
+        if not sep:
+            title, cmd = "", item
+        entry = {"cmd": cmd.strip()}
+        if title.strip():
+            entry["title"] = title.strip()
+        if entry["cmd"]:
+            bench_cmds.append(entry)
+    if bench_cmds:
+        deploy["extra_cmds"] = bench_cmds
 
     config = {"name": args.config_name, "params": params}
     if deploy:
@@ -279,6 +500,9 @@ def cmd_vllm_bench(args) -> None:
                      if item.get(k) is not None},
         })
     write_payload(args, cases, {"source": args.source or "vllm-bench", "source_file": str(args.result)})
+    archive_execution(Path(args.out), args, [
+        (Path(args.result), str(Path(RESULT_DIR) / Path(args.result).name)),
+    ])
 
 
 # ----------------------------------------------------------------- evalscope
@@ -331,6 +555,9 @@ def cmd_evalscope(args) -> None:
         "meta": {},
     }]
     write_payload(args, cases, {"source": args.source or "evalscope", "source_file": str(args.summary)})
+    archive_execution(Path(args.out), args, [
+        (Path(args.summary), str(Path(RESULT_DIR) / Path(args.summary).name)),
+    ])
 
 
 # --------------------------------------------------------- benchmark-suite
@@ -343,6 +570,9 @@ def _bs_case_desc(case: dict) -> str:
 
 
 CASE_LOG_FILES = (("stdout_log", "stdout.log"), ("stderr_log", "stderr.log"))
+# 归档每个用例的原始记录：日志（stdout/stderr）优先，其余为便于回溯的扩展名。
+_CASE_ARCHIVE_NAMES = ("stdout.log", "stderr.log", "console.log", "case.json", "command.json")
+_SUMMARY_ARCHIVE_NAMES = ("summary.json", "summary.csv", "config.json", "requests.jsonl", "manifest.json")
 
 
 def _case_dirs_by_key(summary_path: str) -> dict[str, Path]:
@@ -361,6 +591,26 @@ def _case_dirs_by_key(summary_path: str) -> dict[str, Path]:
         if isinstance(case_key, str) and case_key:
             out[case_key] = case_dir
     return out
+
+
+def _archive_benchmark_suite(out: Path, summary_path: str) -> list[tuple[Path, str]]:
+    """测试端原始产物：摘要/manifest 与每个用例的 stdout.log、stderr.log 等。
+
+    失败用例没有入库，但它们的 stdout/stderr 也一并归档；这些文件不会被适配器
+    消费，导入时按 run 产物落盘，可在 run 详情页下载。
+    """
+    root = Path(summary_path).parent
+    sources: list[tuple[Path, str]] = []
+    for name in _SUMMARY_ARCHIVE_NAMES:
+        path = root / name
+        if path.is_file():
+            sources.append((path, str(Path(RAW_DIR) / name)))
+    for case_dir in sorted(root.glob("case-*")):
+        for name in _CASE_ARCHIVE_NAMES:
+            path = case_dir / name
+            if path.is_file():
+                sources.append((path, str(Path(RAW_DIR) / case_dir.name / name)))
+    return sources
 
 
 def cmd_benchmark_suite(args) -> None:
@@ -440,6 +690,15 @@ def cmd_benchmark_suite(args) -> None:
         "source_file": str(args.summary),
         "benchmark_client_config": config,
     })
+    sources = _archive_benchmark_suite(out_root, args.summary)
+    root = Path(args.summary).parent
+    for extra in (args.config, args.requests):
+        if not extra:
+            continue
+        path = Path(extra)
+        if path.is_file() and path.parent != root:
+            sources.append((path, str(Path(RAW_DIR) / path.name)))
+    archive_execution(out_root, args, sources)
 
 
 def build_parser() -> argparse.ArgumentParser:
