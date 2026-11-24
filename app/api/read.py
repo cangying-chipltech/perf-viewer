@@ -7,6 +7,7 @@ from .. import config
 from ..db import get_db
 from ..queries import (comparison_view, model_detail, model_summaries, run_detail,
                        scenario_detail)
+from ..scope import parse_config_ids, parse_source_scenario_ids
 
 router = APIRouter(prefix="/api")
 
@@ -108,6 +109,9 @@ def api_catalog():
         for s in scenarios:
             s["suite_ids"] = [r["suite_id"] for r in conn.execute(
                 "SELECT suite_id FROM scenario_suite WHERE scenario_id = ?", (s["id"],)).fetchall()]
+            s["source_scenario_ids"] = parse_source_scenario_ids(
+                s.get("source_scenario_ids"))
+            s["config_ids"] = parse_config_ids(s.get("config_ids"))
         configs = [dict(r) for r in conn.execute(
             "SELECT * FROM config_set ORDER BY model_id, id").fetchall()]
         for c in configs:

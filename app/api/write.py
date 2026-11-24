@@ -129,6 +129,64 @@ def api_exclude_run(run_id: int, body: ExcludeBody):
     return {"ok": True, "run_id": run_id, "excluded": body.excluded}
 
 
+class ScenarioRunsBody(BaseModel):
+    run_ids: list[int]
+
+
+def _require_scenario(conn, scenario_id: int):
+    scenario = conn.execute("SELECT * FROM scenario WHERE id = ?", (scenario_id,)).fetchone()
+    if not scenario:
+        raise HTTPException(404, "场景不存在")
+    return scenario
+
+
+def _validate_run_scope(conn, scenario, run_id: int) -> None:
+    run = conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+    if not run:
+        raise HTTPException(404, f"run {run_id} 不存在")
+    if run["model_id"] != scenario["model_id"]:
+        raise HTTPException(400, f"run {run_id} 不属于场景所在模型")
+    linked = conn.execute(
+        "SELECT 1 FROM scenario_suite WHERE scenario_id = ? AND suite_id = ?",
+        (scenario["id"], run["suite_id"])).fetchone()
+    if not linked:
+        raise HTTPException(400, f"run {run_id} 的 suite 未关联到该场景")
+
+
+@router.post("/scenarios/{scenario_id}/runs")
+def api_assign_scenario_runs(scenario_id: int, body: ScenarioRunsBody):
+    """把 run 归属到指定场景（覆盖原归属），用于修正无 scenario_id 的历史数据。"""
+    run_ids = sorted({int(r) for r in body.run_ids})
+    with get_db() as conn:
+        scenario = _require_scenario(conn, scenario_id)
+        for run_id in run_ids:
+            _validate_run_scope(conn, scenario, run_id)
+        ph = ",".join("?" * len(run_ids))
+        if run_ids:
+            conn.execute(f"UPDATE run SET scenario_id = ? WHERE id IN ({ph})",
+                         (scenario_id, *run_ids))
+    return {"ok": True, "scenario_id": scenario_id, "assigned": len(run_ids)}
+
+
+class RunScenarioBody(BaseModel):
+    scenario_id: int | None = None
+
+
+@router.post("/runs/{run_id}/scenario")
+def api_set_run_scenario(run_id: int, body: RunScenarioBody):
+    """设置或清除单个 run 的场景归属；scenario_id=null 表示取消归属。"""
+    with get_db() as conn:
+        run = conn.execute("SELECT * FROM run WHERE id = ?", (run_id,)).fetchone()
+        if not run:
+            raise HTTPException(404, "run 不存在")
+        if body.scenario_id is not None:
+            scenario = _require_scenario(conn, body.scenario_id)
+            _validate_run_scope(conn, scenario, run_id)
+        conn.execute("UPDATE run SET scenario_id = ? WHERE id = ?",
+                     (body.scenario_id, run_id))
+    return {"ok": True, "run_id": run_id, "scenario_id": body.scenario_id}
+
+
 class MergeBody(BaseModel):
     source_id: int
     target_id: int

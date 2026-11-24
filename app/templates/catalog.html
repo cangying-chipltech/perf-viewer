@@ -6,19 +6,28 @@
 
 <h2>场景</h2>
 <table>
-  <thead><tr><th>模型</th><th>名称</th><th>suite</th><th>评分参数</th><th>编辑</th></tr></thead>
+  <thead><tr><th>模型</th><th>名称</th><th>suite</th><th>来源场景</th><th>对比配置</th><th>评分参数</th><th>编辑</th></tr></thead>
   <tbody>
   {% for s in scenarios %}
     <tr>
       <td>{{ s.model_id }}</td>
       <td><a href="/models/{{ s.model_id }}/scenarios/{{ s.id }}">{{ s.name }}</a></td>
       <td>{% for k in s.suite_keys %}<span class="tag">{{ k }}</span>{% endfor %}</td>
+      <td>{% for sid in s.source_scenario_ids %}<span class="tag">#{{ sid }}</span>{% endfor %}</td>
+      <td>{% if s.config_ids %}{% for cid in s.config_ids %}<span class="tag">#{{ cid }}</span>{% endfor %}{% else %}<span class="muted">全部</span>{% endif %}</td>
       <td><pre class="params">{{ s.scoring | tojson }}</pre></td>
       <td>
         <form data-api="/api/catalog/scenarios/{{ s.id }}" data-method="PATCH">
           <input name="name" value="{{ s.name }}" size="14">
           <input name="description" value="{{ s.description or '' }}" size="20" placeholder="描述">
           <input name="suite_keys" data-list="1" value="{{ s.suite_keys | join(',') }}" size="18" placeholder="suite keys，逗号分隔">
+          <input name="source_scenario_ids" data-list="1" value="{{ s.source_scenario_ids | join(',') }}" size="10" placeholder="来源场景 ID">
+          <div class="chip-list"><span class="muted small">对比配置（不勾选=全部）：</span>
+            {% for c in configs if c.model_id == s.model_id %}
+            <label class="chip"><input type="checkbox" name="config_ids" value="{{ c.id }}"
+              {% if c.id in s.config_ids %}checked{% endif %}> {{ c.name }}</label>
+            {% endfor %}
+          </div>
           <textarea name="scoring" data-json="1" rows="3" cols="26">{{ s.scoring | tojson }}</textarea>
           <button type="submit">保存</button>
         </form>
@@ -38,6 +47,11 @@
   <input name="name" placeholder="场景名" required>
   <input name="description" placeholder="描述" size="24">
   <input name="suite_keys" data-list="1" placeholder="suite keys，逗号分隔" size="22">
+  <input name="source_scenario_ids" data-list="1" placeholder="来源场景 ID，逗号分隔" size="18">
+  <div class="chip-list"><span class="muted small">对比配置（不勾选=全部）：</span>
+    {% for c in configs %}<label class="chip"><input type="checkbox" name="config_ids"
+      value="{{ c.id }}"> {{ c.model_name }} · {{ c.name }}</label>{% endfor %}
+  </div>
   <button type="submit">创建</button>
 </form>
 

@@ -15,12 +15,16 @@ from .db import get_db
 from .entities import normalize_params, parse_serve_flags
 from .groups import group_configs
 from .queries import model_detail, model_summaries, run_detail, scenario_detail
+from .repro import resolve_repro
+from .scope import effective_scenario_ids, parse_config_ids, parse_source_scenario_ids
 from .scoring import _compare, cached_comparison
 from .security import sanitize_html
 
 router = APIRouter()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 templates.env.globals["model_url"] = lambda name: "/models/" + quote(name, safe="")
+templates.env.globals["asset_version"] = str(int(
+    (Path(__file__).parent / "static" / "app.js").stat().st_mtime))
 
 
 def _fmt(value, digits=3):
@@ -200,7 +204,7 @@ def build_table(comp: dict, suite_out: dict, mode: str) -> list[dict]:
                 cell["mark"] = _mark(score)
             rows.append({"case": case, "metric": metric,
                          "metric_def": metric_defs[metric], "cells": cells, "empty": False,
-                         "notes": notes})
+                         "notes": notes, "repro": case_out.get("repro") or {}})
     return rows
 
 
@@ -417,7 +421,8 @@ def _as_config_view(cfg: dict) -> dict:
 def best_config_view(scenario: dict, comp: dict, selected: dict | None,
                      recommended: dict | None) -> dict | None:
     """场景页展示的最佳配置：人工确认/改判优先，其次自动推荐，再次唯一配置。"""
-    if scenario.get("best_config"):
+    if (scenario.get("best_config")
+            and scenario["best_config"].get("id") in comp["configs"]):
         status = scenario.get("best_status") or "confirmed"
         label = {"confirmed": "人工确认", "overridden": "人工改判",
                  "recommended": "推荐"}.get(status, status)
@@ -561,7 +566,7 @@ def best_data_view(comp: dict, cfg_id: int) -> list[dict]:
             metrics = []
             for key in case_out["metric_keys"]:
                 cell = own.get(key)
-                source_id, fallback = cfg_id, False
+                source_id, fallback = focus_id, False
                 if not cell:
                     for cid in order:
                         if cid == focus_id:
@@ -586,8 +591,20 @@ def best_data_view(comp: dict, cfg_id: int) -> list[dict]:
                 })
             sources = []
             seen_sources = set()
+            source_config_ids: list[int] = []
+            repro = case_out.get("repro") or {}
+            seen_repro = set()
             for metric in metrics:
-                if metric.get("missing") or not metric.get("fallback"):
+                if metric.get("missing"):
+                    continue
+                source_id = metric.get("source_config_id")
+                if source_id is not None and source_id not in source_config_ids:
+                    source_config_ids.append(source_id)
+                metric["repro"] = repro.get(source_id)
+                if metric["repro"] and source_id not in seen_repro:
+                    seen_repro.add(source_id)
+                    metric["repro_show"] = True
+                if not metric.get("fallback"):
                     continue
                 key = (metric.get("source_config_id"), metric.get("source_config_name"),
                        metric.get("source_rank"))
@@ -597,6 +614,10 @@ def best_data_view(comp: dict, cfg_id: int) -> list[dict]:
             cases.append({"case": case_out["case"], "metrics": metrics,
                           "metric_map": {m["key"]: m for m in metrics},
                           "fallback_sources": sources,
+                          "source_configs": [
+                              {"id": cid, "name": configs[cid]["name"]}
+                              for cid in source_config_ids if cid in configs
+                          ],
                           "missing": not any(not m.get("missing") for m in metrics)})
         keys: list[str] = []
         for case_view in cases:
@@ -1000,10 +1021,12 @@ def partial_pk_case(request: Request, scenario_id: int, case: int = Query(...),
             case_params = json.loads(case_row["params"])
         except (TypeError, json.JSONDecodeError):
             case_params = {}
+    repro = (case_out.get("repro") or {}) if case_out else {}
     return templates.TemplateResponse(request, "partials/pk_case_detail.html", {
         "case": dict(case_row) if case_row else None,
         "case_params": case_params,
         "a": comp["configs"].get(pk_a), "b": comp["configs"].get(pk_b),
+        "repro_a": repro.get(pk_a), "repro_b": repro.get(pk_b),
         "metrics": metrics, "scenario_id": scenario_id,
     })
 
@@ -1106,22 +1129,35 @@ def partial_drilldown(request: Request, scenario_id: int,
                       config: int = Query(...), mode: str = Query(default="same-node")):
     with get_db() as conn:
         comp = cached_comparison(conn, scenario_id, None)
+        scope_ids = effective_scenario_ids(conn, scenario_id)
+        scope_ph = ",".join("?" * len(scope_ids))
         case_row = conn.execute("SELECT * FROM test_case WHERE id = ?", (case,)).fetchone()
         cfg_row = conn.execute("SELECT * FROM config_set WHERE id = ?", (config,)).fetchone()
         runs = conn.execute(
             "SELECT r.*, n.label AS node_label, cr.metrics, cr.n_measured, cr.err_count"
             " FROM run r JOIN node n ON n.id = r.node_id"
             " JOIN case_result cr ON cr.run_id = r.id"
-            " WHERE r.config_id = ? AND cr.case_id = ? ORDER BY r.id",
-            (config, case)).fetchall()
+            " WHERE r.config_id = ? AND cr.case_id = ?"
+            f" AND r.scenario_id IN ({scope_ph}) ORDER BY r.id",
+            (config, case, *scope_ids)).fetchall()
+        model_row = conn.execute(
+            "SELECT name FROM model WHERE id = ?",
+            (cfg_row["model_id"],)).fetchone() if cfg_row else None
+    model_name = model_row["name"] if model_row else ""
     run_items = []
     for r in runs:
         metrics = json.loads(r["metrics"])
+        manifest = json.loads(r["manifest"] or "{}")
         run_items.append({
             "id": r["id"], "node": r["node_label"], "value": metrics.get(metric),
             "n_measured": r["n_measured"], "valid": bool(r["valid"]),
             "excluded": bool(r["excluded"]), "started_at": r["started_at"],
             "worker_label": r["worker_label"],
+            "repro_cmd": resolve_repro(
+                model_name, dict(cfg_row) if cfg_row else {},
+                {"manifest": manifest, "backend": r["backend"],
+                 "node_label": r["node_label"]},
+                dict(case_row) if case_row else {}),
         })
     cell = None
     for s in comp["suites"]:
@@ -1133,6 +1169,93 @@ def partial_drilldown(request: Request, scenario_id: int,
         "config": dict(cfg_row) if cfg_row else None,
         "metric": metric, "metric_def": comp["metric_defs"].get(metric),
         "mode": mode, "cell": cell, "runs": run_items,
+    })
+
+
+@router.get("/partials/scenarios/{scenario_id}/case_runs")
+def partial_case_runs(request: Request, scenario_id: int, case: int = Query(...),
+                      config: list[int] | None = Query(default=None)):
+    """某个 case 的分节点执行数据；同一节点多条记录可展开查看。"""
+    with get_db() as conn:
+        comp = cached_comparison(conn, scenario_id, None)
+        scope_ids = effective_scenario_ids(conn, scenario_id)
+        scope_ph = ",".join("?" * len(scope_ids))
+        case_row = conn.execute("SELECT * FROM test_case WHERE id = ?", (case,)).fetchone()
+        sql = ("SELECT r.*, n.label AS node_label, cs.name AS config_name,"
+               " cr.metrics, cr.n_measured, cr.err_count"
+               " FROM run r JOIN node n ON n.id = r.node_id"
+               " JOIN case_result cr ON cr.run_id = r.id"
+               " JOIN config_set cs ON cs.id = r.config_id"
+               f" WHERE cr.case_id = ? AND r.scenario_id IN ({scope_ph})")
+        params: list = [case, *scope_ids]
+        if config:
+            sql += f" AND r.config_id IN ({','.join('?' * len(config))})"
+            params.extend(config)
+        runs = conn.execute(sql + " ORDER BY r.config_id, n.label, r.id", params).fetchall()
+
+    metric_defs = comp["metric_defs"]
+    run_items = []
+    for r in runs:
+        try:
+            metrics = json.loads(r["metrics"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            metrics = {}
+        run_items.append({
+            "id": r["id"], "config_id": r["config_id"], "config_name": r["config_name"],
+            "node": r["node_label"], "metrics": metrics,
+            "n_measured": r["n_measured"], "err_count": r["err_count"],
+            "valid": bool(r["valid"]), "excluded": bool(r["excluded"]),
+            "started_at": r["started_at"], "worker_label": r["worker_label"],
+        })
+
+    metric_keys: list[str] = []
+    for item in run_items:
+        for key in item["metrics"]:
+            if key in metric_defs and key not in metric_keys:
+                metric_keys.append(key)
+    metric_keys = [k for k in metric_defs if k in metric_keys]
+
+    config_order: list[int] = []
+    if config:
+        for cid in config:
+            if cid not in config_order:
+                config_order.append(cid)
+    for item in run_items:
+        if item["config_id"] not in config_order:
+            config_order.append(item["config_id"])
+
+    by_config: dict[int, list[dict]] = {}
+    for item in run_items:
+        by_config.setdefault(item["config_id"], []).append(item)
+
+    configs_view = []
+    for cid in config_order:
+        items = by_config.get(cid)
+        if not items:
+            continue
+        by_node: dict[str, list[dict]] = {}
+        for item in items:
+            by_node.setdefault(item["node"], []).append(item)
+        nodes = []
+        for label in sorted(by_node):
+            records = sorted(by_node[label], key=lambda r: r["id"])
+            valid_records = [r for r in records if r["valid"] and not r["excluded"]]
+            means = {}
+            for key in metric_keys:
+                values = [r["metrics"].get(key) for r in valid_records
+                          if r["metrics"].get(key) is not None]
+                means[key] = (sum(values) / len(values)) if values else None
+            nodes.append({
+                "label": label, "records": records,
+                "valid_count": len(valid_records), "means": means,
+            })
+        cfg = comp["configs"].get(cid) or {"id": cid, "name": items[0]["config_name"]}
+        configs_view.append({"config": cfg, "nodes": nodes})
+
+    return templates.TemplateResponse(request, "partials/case_runs.html", {
+        "case": dict(case_row) if case_row else None,
+        "configs": configs_view, "metric_keys": metric_keys,
+        "metric_defs": metric_defs,
     })
 
 
@@ -1153,9 +1276,17 @@ def page_run(request: Request, run_id: int):
             item["html"] = render_markdown(path.read_text(encoding="utf-8"), run["artifacts"])
         artifacts_render.append(item)
     manifest_pretty = json.dumps(run["manifest"], ensure_ascii=False, indent=2)
+    repro_items = []
+    model_name = (run.get("model") or {}).get("name") or ""
+    suite_key = (run.get("suite") or {}).get("key") or ""
+    for cr in run["case_results"]:
+        repro_items.append({
+            "case_key": cr["case_key"],
+            "cmd": resolve_repro(model_name, run.get("config") or {}, run, cr, suite_key),
+        })
     return templates.TemplateResponse(request, "run.html", {
         "run": run, "metric_defs": metric_defs, "artifacts_render": artifacts_render,
-        "manifest_pretty": manifest_pretty,
+        "manifest_pretty": manifest_pretty, "repro_items": repro_items,
     })
 
 
@@ -1179,6 +1310,9 @@ def page_catalog(request: Request):
                 "SELECT su.key FROM suite su JOIN scenario_suite ss ON ss.suite_id = su.id"
                 " WHERE ss.scenario_id = ?", (s["id"],)).fetchall()]
             s["scoring"] = json.loads(s["scoring"] or "{}")
+            s["source_scenario_ids"] = parse_source_scenario_ids(
+                s.get("source_scenario_ids"))
+            s["config_ids"] = parse_config_ids(s.get("config_ids"))
         configs = [dict(r) for r in conn.execute(
             "SELECT * FROM config_set ORDER BY model_id, id").fetchall()]
         model_names = {m["id"]: m["name"] for m in models}

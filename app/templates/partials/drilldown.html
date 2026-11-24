@@ -42,7 +42,7 @@
   {% endif %}
   <h5>该配置 × case 的全部运行</h5>
   <table>
-    <thead><tr><th>run</th><th>节点</th><th>指标值</th><th>n</th><th>状态</th><th>开始时间</th><th>worker</th></tr></thead>
+    <thead><tr><th>run</th><th>节点</th><th>指标值</th><th>n</th><th>状态</th><th>开始时间</th><th>worker</th><th>复现</th></tr></thead>
     <tbody>
     {% for r in runs %}
       <tr class="{{ 'row-invalid' if not r.valid or r.excluded else '' }}">
@@ -57,6 +57,15 @@
         </td>
         <td class="small">{{ r.started_at or '—' }}</td>
         <td>{{ r.worker_label or '—' }}</td>
+        <td>
+          {% if r.repro_cmd %}
+          <details class="repro-details" onclick="event.stopPropagation()">
+            <summary>查看</summary>
+            <p><button type="button" class="copy" data-copy="#repro-dd-{{ r.id }}" data-label="复制">复制</button></p>
+            <pre id="repro-dd-{{ r.id }}" class="cmd">{{ r.repro_cmd }}</pre>
+          </details>
+          {% else %}—{% endif %}
+        </td>
       </tr>
     {% endfor %}
     </tbody>

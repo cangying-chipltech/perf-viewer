@@ -4,7 +4,7 @@ from pathlib import Path
 
 from . import config
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 7
 
 MIGRATIONS: dict[int, list[str]] = {
     2: [
@@ -15,7 +15,62 @@ MIGRATIONS: dict[int, list[str]] = {
     3: [
         "ALTER TABLE config_set ADD COLUMN deploy TEXT NOT NULL DEFAULT '{}'",
     ],
+    4: [
+        "ALTER TABLE run ADD COLUMN scenario_id INTEGER REFERENCES scenario(id) ON DELETE SET NULL",
+        "CREATE INDEX IF NOT EXISTS idx_run_scenario ON run(scenario_id)",
+    ],
+    5: [],
+    6: [
+        "ALTER TABLE scenario ADD COLUMN source_scenario_ids TEXT NOT NULL DEFAULT '[]'",
+    ],
+    7: [
+        "ALTER TABLE scenario ADD COLUMN config_ids TEXT NOT NULL DEFAULT '[]'",
+    ],
 }
+
+
+def _backfill_run_scenarios(conn) -> None:
+    """把历史 run 的 manifest.scenario_id 回填到 run.scenario_id。
+
+    回填后仍为 NULL 的 run 不参与任何场景的对比；若其 suite 只被一个场景引用，
+    由 assign_legacy_scenarios 兜底归属，避免唯一归属的数据被隐藏。
+    """
+    import json
+
+    rows = conn.execute(
+        "SELECT id, model_id, manifest FROM run WHERE scenario_id IS NULL").fetchall()
+    for row in rows:
+        try:
+            manifest = json.loads(row["manifest"] or "{}")
+            imported = manifest.get("import_manifest") or {}
+            scenario_id = imported.get("scenario_id")
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            continue
+        if not isinstance(scenario_id, int):
+            continue
+        scenario = conn.execute(
+            "SELECT model_id FROM scenario WHERE id = ?", (scenario_id,)).fetchone()
+        if scenario is None or scenario["model_id"] != row["model_id"]:
+            continue
+        conn.execute("UPDATE run SET scenario_id = ? WHERE id = ?",
+                     (scenario_id, row["id"]))
+
+
+def assign_legacy_scenarios(conn) -> None:
+    """把未归属 run 归到唯一引用其 suite 的场景；多场景共用 suite 时保持未归属。"""
+    rows = conn.execute(
+        "SELECT r.id,"
+        " (SELECT COUNT(DISTINCT ss.scenario_id) FROM scenario_suite ss"
+        "  JOIN scenario s ON s.id = ss.scenario_id"
+        "  WHERE ss.suite_id = r.suite_id AND s.model_id = r.model_id) AS n,"
+        " (SELECT MIN(ss.scenario_id) FROM scenario_suite ss"
+        "  JOIN scenario s ON s.id = ss.scenario_id"
+        "  WHERE ss.suite_id = r.suite_id AND s.model_id = r.model_id) AS scenario_id"
+        " FROM run r WHERE r.scenario_id IS NULL").fetchall()
+    for row in rows:
+        if row["n"] == 1 and row["scenario_id"] is not None:
+            conn.execute("UPDATE run SET scenario_id = ? WHERE id = ?",
+                         (row["scenario_id"], row["id"]))
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -77,6 +132,8 @@ def init_db() -> None:
             for v in range(version + 1, SCHEMA_VERSION + 1):
                 for stmt in MIGRATIONS[v]:
                     conn.execute(stmt)
+            _backfill_run_scenarios(conn)
+            assign_legacy_scenarios(conn)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.execute("COMMIT")
         from .entities import seed_metric_defs

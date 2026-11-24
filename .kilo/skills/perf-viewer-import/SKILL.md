@@ -52,7 +52,12 @@ manifest/归一化数据至少要有：
 - `node_label`（节点 IP/hostname）
 - `backend`（本工具统一写 `generic-json`）
 
-建议同时提供 `config.deploy`（`docker_cmd` / `serve_cmd` / `env` / `source`）和 `scenario_id`，用于部署信息展示与场景关联。
+建议同时提供 `config.deploy`（`docker_cmd` / `serve_cmd` / `env` / `source`）和 `scenario_id`，用于部署信息展示与场景关联。`scenario_id` 同时限定 run 的 PK 归属：同一 suite 被多个场景复用时，只有本场景导入的 run 参与对比；未带 `scenario_id` 的历史 run 按 suite 共享。
+
+每个数据点（配置 × suite × case）都会在 perf-viewer 中展示「复现命令」：
+导入时可用 `--repro-cmd '<命令>'` 记录 run 级命令，或用 `--case-repro <case_key>=<命令>`
+记录单个 case 的命令（优先级最高）。未提供时由 perf-viewer 按 backend 和 case 参数生成客户端压测命令；
+`backend` 识别不出时回退为 benchmark-suite 命令模板。
 
 ### 配置集归一口径
 
@@ -293,12 +298,14 @@ python3 $K benchmark-suite \
     "n_measured": 100, "err_count": 0,
     "in_tok": 128000, "out_tok": 25600,
     "params": {"max_concurrency": 64, "input_tokens": 64000, "output_tokens": 1024},
-    "description": "并发 64 · 输入 64000 · 输出 1024"
+    "description": "并发 64 · 输入 64000 · 输出 1024",
+    "repro_cmd": "python3 benchmark_serving.py ...   # 可选：该 case 的复现命令"
   }]
 }
 ```
 
-manifest 与 normalized 的 `model/config/suite_key/node` 保持一致；manifest 额外支持 `scenario_id` 与 `config.deploy`。
+manifest 与 normalized 的 `model/config/suite_key/node` 保持一致；manifest 额外支持 `scenario_id`、
+`config.deploy`、run 级 `repro_cmd` 与 `cases.<case_key>.repro_cmd`（复现命令）。
 
 ## 6. 常见问题
 

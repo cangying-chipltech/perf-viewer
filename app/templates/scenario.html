@@ -4,6 +4,14 @@
 <p class="crumb"><a href="/">模型</a> / <a href="{{ model_url(model.name) }}">{{ model.name }}</a> / {{ scenario.name }}</p>
 <h1>{{ scenario.name }}</h1>
 {% if scenario.description %}<p class="muted">{{ scenario.description }}</p>{% endif %}
+{% if scenario.source_scenarios %}
+<p class="notice small">自定义对比场景：合并
+  {% for src in scenario.source_scenarios %}<a href="{{ model_url(model.name) }}/scenarios/{{ src.id }}">{{ src.name }}</a>{% if not loop.last %}、{% endif %}{% endfor %}
+  的 run 参与对比。</p>
+{% endif %}
+{% if scenario.selected_configs %}
+<p class="notice small">仅比较配置：{% for cfg in scenario.selected_configs %}<span class="mono">{{ cfg.name }}</span>{% if not loop.last %}、{% endif %}{% endfor %}</p>
+{% endif %}
 
 {% if best_view %}
 {% set cfg = best_view.config %}
@@ -67,7 +75,8 @@
     {% if bd.focus_rank %}（排名 #{{ bd.focus_rank }}）{% endif %}。
     全局最佳配置未参与本套件；其余测试项缺失时回退到本套件排名靠前的配置。</p>
   {% endif %}
-  <p class="muted small">单元格为各指标最佳值；范围、n runs、覆盖节点与来源 run（#ID）显示在单元格内。</p>
+  <p class="muted small">单元格为各指标最佳值；范围、n runs 与覆盖节点显示在单元格内。
+    点击 case 下的「节点执行数据」可展开查看该用例各节点记录。</p>
   <details class="case-filter">
     <summary>case 过滤（{{ bd.cases | length }}）</summary>
     <div class="case-filter-list">
@@ -94,7 +103,7 @@
     </tr></thead>
     <tbody>
     {% for c in bd.cases %}
-      <tr data-case-key="{{ c.case.case_key }}">
+      <tr data-case-key="{{ c.case.case_key }}" data-case-main>
         <th class="case-cell">
           <strong class="mono">{{ c.case.case_key }}</strong>
           <div class="muted small">{{ c.case.description or '' }}</div>
@@ -103,6 +112,12 @@
           <div class="muted small">* 回退来源：
             {% for src in c.fallback_sources %}{% if src.rank %}#{{ src.rank }} {% endif %}{{ src.name }}{% if not loop.last %}、{% endif %}{% endfor %}
           </div>
+          {% endif %}
+          {% if c.source_configs %}
+          <a href="#" class="case-runs-link" title="展开各节点该用例的执行数据"
+             hx-get="/partials/scenarios/{{ scenario_id }}/case_runs?case={{ c.case.id }}{% for sc in c.source_configs %}&config={{ sc.id }}{% endfor %}"
+             hx-target="#case-runs-{{ bd.suite.id }}-{{ c.case.id }}"
+             hx-swap="innerHTML">节点执行数据</a>
           {% endif %}
         </th>
         {% for mk in bd.metric_keys %}
@@ -113,11 +128,22 @@
           {% else %}
           <span class="mono"><strong>{{ m.best.value | fmt }}</strong>{% if m.fallback %}<sup>*</sup>{% endif %}</span>
           <div class="muted small">[{{ m.best.min | fmt }}, {{ m.best.max | fmt }}] · {{ m.best.n_runs }} runs{% if m.same %} · {% for node in m.same %}{{ node }}{% if not loop.last %}、{% endif %}{% endfor %}{% endif %}
-            {% for rid in m.best.run_ids %}· <a href="/runs/{{ rid }}">#{{ rid }}</a> {% endfor %}
           </div>
+          {% if m.repro_show and m.repro and m.repro.cmd %}
+          <details class="repro-details">
+            <summary>复现</summary>
+            <p><button type="button" class="copy" data-copy="#repro-best-{{ bd.suite.id }}-{{ c.case.id }}-{{ mk.key }}" data-label="复制">复制</button></p>
+            <pre id="repro-best-{{ bd.suite.id }}-{{ c.case.id }}-{{ mk.key }}" class="cmd">{{ m.repro.cmd }}</pre>
+          </details>
+          {% endif %}
           {% endif %}
         </td>
         {% endfor %}
+      </tr>
+      <tr class="case-runs-row" data-case-key="{{ c.case.case_key }}">
+        <td colspan="{{ bd.metric_keys | length + 1 }}">
+          <div id="case-runs-{{ bd.suite.id }}-{{ c.case.id }}" class="case-runs"></div>
+        </td>
       </tr>
     {% endfor %}
     </tbody>

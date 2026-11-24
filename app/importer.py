@@ -15,7 +15,7 @@ from .db import get_db, get_db_dryrun
 from .entities import (ensure_case, ensure_suite, normalize_deploy, register_config,
                        register_node, resolve_model, seed_metric_defs)
 from .normalize import NormalizedRun, kind_of_suffix
-from .security import redact
+from .security import redact, redact_cmd
 
 MAX_ZIP_MEMBERS = 20000
 MAX_ZIP_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
@@ -228,11 +228,13 @@ def import_runs(root: Path, manifest: dict, source: str = "", dry_run: bool = Fa
             batch_dir = config.ARTIFACTS_DIR / str(batch_id)
 
         scenario_id = manifest.get("scenario_id")
+        scenario_model_id = None
         if scenario_id is not None:
             row = conn.execute("SELECT * FROM scenario WHERE id = ?", (scenario_id,)).fetchone()
             if not row:
                 raise ImportError_(f"scenario_id={scenario_id} 不存在")
             scenario_id = row["id"]
+            scenario_model_id = row["model_id"]
 
         seen_files: set[str] = set()
         consumed: set[str] = set()
@@ -243,6 +245,9 @@ def import_runs(root: Path, manifest: dict, source: str = "", dry_run: bool = Fa
             conn.execute("SAVEPOINT run_sp")
             try:
                 model = resolve_model(conn, run.model_name, run.model_aliases)
+                if scenario_model_id is not None and scenario_model_id != model["id"]:
+                    raise ImportError_(
+                        f"scenario_id={scenario_id} 不属于模型 {model['name']}")
                 cfg_notes = (manifest.get("config") or {}).get("notes")
                 cfg, cfg_created = register_config(conn, model["id"], run.config_name,
                                                    redact(run.config_params), notes=cfg_notes,
@@ -258,8 +263,9 @@ def import_runs(root: Path, manifest: dict, source: str = "", dry_run: bool = Fa
 
                 sig = run_signature(run, cfg["fingerprint"], model["name"])
                 dup = conn.execute(
-                    "SELECT id FROM run WHERE model_id = ? AND suite_id = ? AND signature = ?",
-                    (model["id"], suite["id"], sig),
+                    "SELECT id FROM run WHERE model_id = ? AND suite_id = ?"
+                    " AND scenario_id IS ? AND signature = ?",
+                    (model["id"], suite["id"], scenario_id, sig),
                 ).fetchone()
                 if dup is not None:
                     conn.execute("RELEASE SAVEPOINT run_sp")
@@ -298,15 +304,26 @@ def import_runs(root: Path, manifest: dict, source: str = "", dry_run: bool = Fa
 
                 run_meta = redact(dict(run.meta))
                 run_meta["case_meta"] = {c.case_key: redact(c.meta) for c in run.cases if c.meta}
+                case_repro = {
+                    c.case_key: redact_cmd(c.repro_cmd.strip())
+                    for c in run.cases
+                    if isinstance(c.repro_cmd, str) and c.repro_cmd.strip()
+                }
+                if case_repro:
+                    run_meta["case_repro"] = case_repro
+                if isinstance(run.repro_cmd, str) and run.repro_cmd.strip():
+                    run_meta["repro_cmd"] = redact_cmd(run.repro_cmd.strip())
                 run_meta["import_manifest"] = manifest
                 batch_dir.mkdir(parents=True, exist_ok=True)
                 cur = conn.execute(
                     "INSERT INTO run(model_id, config_id, node_id, suite_id, backend, started_at,"
                     " ended_at, worker_label, valid, excluded, manifest, artifacts_dir, batch_id,"
-                    " signature) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " signature, scenario_id)"
+                    " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (model["id"], cfg["id"], node["id"], suite["id"], run.backend,
                      run.started_at, run.ended_at, run.worker_label, int(run.valid), 0,
-                     json.dumps(run_meta, ensure_ascii=False), str(batch_dir), batch_id, sig),
+                     json.dumps(run_meta, ensure_ascii=False), str(batch_dir), batch_id, sig,
+                     scenario_id),
                 )
                 run_id = cur.lastrowid
                 for case_row, case in case_ids:

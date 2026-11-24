@@ -37,6 +37,7 @@ def _from_dict(data: dict, manifest: dict) -> NormalizedRun:
             out_tok=item.get("out_tok"),
             params=item.get("params") or {},
             description=item.get("description", ""),
+            repro_cmd=item.get("repro_cmd") or item.get("repro"),
             meta=item.get("meta") or {},
         ))
     run = NormalizedRun(
@@ -53,6 +54,7 @@ def _from_dict(data: dict, manifest: dict) -> NormalizedRun:
         started_at=data.get("started_at"),
         ended_at=data.get("ended_at"),
         worker_label=data.get("worker_label"),
+        repro_cmd=data.get("repro_cmd") or data.get("repro"),
         meta=data.get("meta") or {},
     )
     if not run.config_name or run.config_params is None:

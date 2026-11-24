@@ -49,16 +49,23 @@ def make_catalog(conn, model_name="test/model", suite_key="s1", case_keys=("c1",
 
 
 def make_run(conn, model, suite, cases, config_name, params, node_label,
-             metrics_by_case, valid=True, excluded=False, started_at=None, backend="test"):
+             metrics_by_case, valid=True, excluded=False, started_at=None, backend="test",
+             scenario_id=None):
     import json
     from app.entities import register_config, register_node
+    if scenario_id is None:
+        linked = {r["scenario_id"] for r in conn.execute(
+            "SELECT DISTINCT scenario_id FROM scenario_suite WHERE suite_id = ?",
+            (suite["id"],)).fetchall()}
+        if len(linked) == 1:
+            scenario_id = linked.pop()
     cfg, _ = register_config(conn, model["id"], config_name, params)
     node = register_node(conn, node_label)
     cur = conn.execute(
         "INSERT INTO run(model_id, config_id, node_id, suite_id, backend, started_at,"
-        " valid, excluded, manifest) VALUES(?,?,?,?,?,?,?,?,?)",
+        " valid, excluded, manifest, scenario_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
         (model["id"], cfg["id"], node["id"], suite["id"], backend, started_at,
-         int(valid), int(excluded), "{}"),
+         int(valid), int(excluded), "{}", scenario_id),
     )
     run_id = cur.lastrowid
     for case, metrics in zip(cases, metrics_by_case):
@@ -79,4 +86,9 @@ def make_scenario(conn, model, suite, name="场景"):
     sid = cur.lastrowid
     conn.execute("INSERT INTO scenario_suite(scenario_id, suite_id) VALUES(?,?)",
                  (sid, suite["id"]))
+    linked = conn.execute("SELECT COUNT(DISTINCT scenario_id) n FROM scenario_suite"
+                          " WHERE suite_id = ?", (suite["id"],)).fetchone()["n"]
+    if linked == 1:
+        conn.execute("UPDATE run SET scenario_id = ? WHERE scenario_id IS NULL"
+                     " AND suite_id = ?", (sid, suite["id"]))
     return sid

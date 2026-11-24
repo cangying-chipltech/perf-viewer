@@ -42,6 +42,7 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 
 - **模型** `model`：以 served name 为主键，支持别名（如 `cltech/glm53` ↔ `GLM-5.3-MTP-Mix`）。
 - **场景** `scenario`：交付/调优目标，引用若干测试集合；持有最佳配置与评分参数。
+- **自定义对比场景**：`source_scenario_ids` 指向同模型的其他场景，对比时合并这些场景的 run（递归展开、去重）；`config_ids` 可限定参与对比的配置（空列表=全部，配置必须同模型）。run 仍只归属一个普通场景，因此同一配置可在多个场景出现。来源场景的 suite 会自动并入。
 - **测试集合** `suite`：命名 case 矩阵，可被多场景复用；`test_case` 含 params/weight。
 - **配置集** `config_set`：名称 + 参数 JSON，按**归一化参数指纹(sha256)** 去重自动新建，可人工合并/重命名。另持**部署信息** `deploy`（docker 启动命令 / 模型环境变量 / 模型启动命令 / 来源），不参与指纹。
 - **节点** `node`：hostname/IP 标签。
@@ -72,6 +73,7 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 ## 对比与评分
 
 对比以**配置**为主轴：对场景引用的每个 suite，逐 case×metric 做配置间两两比较，不要求每套配置跑满全部节点。
+PK 严格按场景隔离：`run.scenario_id` 是唯一归属依据，只参与所属场景的对比（同一 suite 被多场景复用时也互不串用）；未归属的历史 run 不参与任何场景对比。服务启动迁移时，若 run 的 suite 只被一个场景引用，会自动补齐归属；多场景共用 suite 的历史 run 需通过 `POST /api/scenarios/{id}/runs`（批量）或 `POST /api/runs/{id}/scenario`（单个/清除）指定归属。
 
 - **同节点比较**（高权重）：对每个双方都有数据的节点，比较节点代表值（该节点×配置×case 全部有效运行**均值**）。相对差 ≤ε 记平局 0.5，否则胜 1/负 0；`win_rate_same=得分和/可比节点数`。
 - **跨节点校正比较**（无共同节点时的回退，权重 `w_adj`）：用「同一配置 × 同一 case 在不同节点」的运行估计各节点×metric 的 log 倍率（对数空间最小二乘，可复用其他 case/suite 的证据，见 `node_effects`），把双方节点代表值折算到同一基准后再判胜负。校正结果按配对证据量打折：`confidence = min(1, 配对 case 数 / node_evidence_full)`，间接路径证据再按跳数衰减；无证据时该部分权重为 0。`win_rate_adj` 为按置信度加权的校正胜率。
@@ -132,7 +134,7 @@ uv pip install --python .venv/bin/python -e ".[dev]"
 - 必填：`model`、`config{name,params}`、`suite_key`。`backend` 可省略（自动探测）。`config.deploy` 可选（见「部署信息」）。
 - `node` 可由产物推导（探针 `base_url`、CSV `node` 列、guidellm `meta.json`）；推导不出时必填。
 - `suite` 不存在时按 manifest 自动创建 suite+cases；`cases` 可补充 case params/描述。
-- `scenario_id` 存在时，未被适配器消费的额外文件（报告 md/png 等）挂到该场景。
+- `scenario_id` 决定 run 的场景归属，未被适配器消费的额外文件（报告 md/png 等）也挂到该场景；同一 suite 被多个场景复用时应始终带上它。
 - 时间戳保留时区（产物为 `+08:00` Asia/Shanghai，不做 naive 解析）。
 - manifest/产物中的敏感 key（`api_key/token/secret/password/authorization/credential`）入库前脱敏为 `***`。
 
@@ -205,7 +207,7 @@ docker run -d --name perf-viewer -p 8600:8600 \
 
 - `/` 模型列表卡片（场景数、run 数、最近更新、各场景最佳配置摘要）。
 - `/models/{name}` 模型页：**只展示交付场景**卡片（场景名/描述/suite/当前最佳配置）。
-- `/models/{name}/scenarios/{id}` 场景页：**只展示最佳配置交付信息**——最佳配置标识 + 部署信息（Docker 启动命令 / 模型环境变量 export 文本 / 模型启动命令 / 额外启动命令如 tp16 两容器 ray start，均可一键复制）+ 当前最佳数据（最佳值/范围/n/覆盖节点/来源 run）+ 下钻对比链接（参数与部署对比在对比页）。
+- `/models/{name}/scenarios/{id}` 场景页：**只展示最佳配置交付信息**——最佳配置标识 + 部署信息（Docker 启动命令 / 模型环境变量 export 文本 / 模型启动命令 / 额外启动命令如 tp16 两容器 ray start，均可一键复制）+ 当前最佳数据（最佳值/范围/n/覆盖节点，每个 case 可展开各节点执行记录，同节点多条记录可再展开）+ 下钻对比链接（参数与部署对比在对比页）。
 - `/models/{name}/scenarios/{id}/compare` 下钻对比页：**参数对比**（配置声明参数 ∪ serve 命令解析参数 ∪ Docker 容器启动参数 ∪ 模型环境变量，逐项一行并标注来源；默认只展示差异项，可切「全部参数」；配置多时可勾选参与对比的配置）、**部署信息对比**（Docker/env/serve/额外命令默认折叠，如 tp16 两容器 ray start）、「为什么是最佳 · 评分依据」逐对手/逐 case/逐指标下钻（同节点逐节点胜负、跨节点校正胜负与置信度、最优值对比、metric_score/weight、来源 run，以及节点倍率/配对证据表）、case×配置对比表（同节点/跨节点校正/最优值三模式 tab + 单元格下钻）、ECharts 柱状图、最佳配置确认/改判与历史、场景报告 md/png 渲染。
 - `/runs/{id}` run 详情：case 指标表、manifest、有效性/剔除、产物（md 渲染 HTML、png 内联、csv/log/json 下载）。
 - `/catalog` 目录编辑：场景/suite/case/模型/节点增改、**配置集重命名/备注/部署信息编辑与合并**、metric weights、ε、w_same/w_adj/w_best、node_evidence_full。
@@ -215,7 +217,7 @@ htmx/ECharts 已 vendor 到 `app/static/vendor/`；若 ECharts 缺失，图表�
 ## API 摘要
 
 - 读：`GET /api/models`、`/api/models/{m}`、`/api/models/{m}/scenarios`、`/api/scenarios/{id}`、`/api/scenarios/{id}/comparison?suite=&mode=same-node|adjusted|best`、`/api/runs/{id}`、`/api/artifacts/{id}`、`/api/catalog`、`/api/batches/{id}`、`/healthz`
-- 写（token）：`POST /api/import`、`POST /api/scenarios/{id}/best`、`POST /api/runs/{id}/exclude`、`POST /api/configs/merge`、目录 CRUD `/api/catalog/...`（`PATCH /api/catalog/configs/{id}` 支持 `deploy` 字段）
+- 写（token）：`POST /api/import`、`POST /api/scenarios/{id}/best`、`POST /api/runs/{id}/exclude`、`POST /api/configs/merge`、`POST /api/scenarios/{id}/runs`（批量指定 run 归属）、`POST /api/runs/{id}/scenario`（单个设置/清除归属）、目录场景 CRUD 支持 `source_scenario_ids` / `config_ids`、目录 CRUD `/api/catalog/...`（`PATCH /api/catalog/configs/{id}` 支持 `deploy` 字段）
 
 交互式文档：`/docs`。
 

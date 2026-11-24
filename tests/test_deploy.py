@@ -7,7 +7,7 @@ from app.db import get_db, init_db
 from app.entities import normalize_deploy, register_config, resolve_model
 from app.importer import ImportError_, import_runs
 from app.security import redact_cmd
-from conftest import FIXTURES, make_scenario
+from conftest import FIXTURES, make_catalog, make_run, make_scenario
 
 DEPLOY = {
     "docker_cmd": "docker run -itd --name c --net=host image:tag",
@@ -227,7 +227,9 @@ class TestScenarioPageDeploy:
         assert "--long-prefill-token-threshold 2048" in html
         assert "当前最佳数据" in html
         assert "最佳值" in html
-        assert "来源 run" in html
+        assert "节点执行数据" in html
+        assert 'class="case-runs-link"' in html
+        assert 'href="/runs/' not in html
         assert "模型环境变量" in html
         assert "export VLLM_DLC_INDEX_TOPK=256" in html
         assert "额外启动命令" in html and "ray start --head" in html
@@ -273,6 +275,45 @@ class TestScenarioPageDeploy:
         html = client.get(f"/models/cltech/glm53/scenarios/{sid}").text
         assert "部署信息" in html
         assert "未录入" in html
+
+    def test_case_runs_partial_shows_node_records(self, client, tmp_path):
+        sid = self._setup(tmp_path)
+        with get_db() as conn:
+            case = conn.execute(
+                "SELECT * FROM test_case WHERE case_key = '1m_in_1out'").fetchone()
+            cfg = conn.execute(
+                "SELECT * FROM config_set WHERE name = 'lpt2048'").fetchone()
+            run_count = conn.execute(
+                "SELECT COUNT(*) n FROM run r JOIN case_result cr ON cr.run_id = r.id"
+                " WHERE r.config_id = ? AND cr.case_id = ?",
+                (cfg["id"], case["id"])).fetchone()["n"]
+        resp = client.get(
+            f"/partials/scenarios/{sid}/case_runs"
+            f"?case={case['id']}&config={cfg['id']}")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "节点执行数据" in html
+        assert 'class="node-runs"' in html
+        assert 'href="/runs/' in html
+        if run_count > 1:
+            assert f"展开 {run_count} 条记录" in html
+            assert 'class="run-record-table"' in html
+
+    def test_case_runs_partial_expands_multiple_node_records(self, client):
+        with get_db() as conn:
+            model, suite, cases = make_catalog(
+                conn, suite_key="multi-runs", case_keys=("c1",))
+            sid = make_scenario(conn, model, suite, name="multi")
+            for value in (1.0, 1.2):
+                make_run(conn, model, suite, cases, "cfg", {"x": 1}, "node-a",
+                         [{"e2e_mean_s": value}], started_at="2026-01-01T00:00:00")
+        resp = client.get(
+            f"/partials/scenarios/{sid}/case_runs?case={cases[0]['id']}")
+        assert resp.status_code == 200
+        html = resp.text
+        assert "node-a" in html
+        assert "展开 2 条记录" in html
+        assert 'class="run-record-table"' in html
 
     def test_single_config_kept_simple(self, client, tmp_path):
         with get_db() as conn:
@@ -426,7 +467,8 @@ class TestMigration:
         init_db()
         conn = _connect(db_path)
         try:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 3
+            from app.db import SCHEMA_VERSION
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
             row = conn.execute("SELECT deploy FROM config_set").fetchone()
             assert row["deploy"] == "{}"
         finally:

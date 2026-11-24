@@ -246,8 +246,35 @@ table.best-data thead th { white-space: normal; }
 table.best-data td.metric-cell { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .best-data-wrap { overflow-x: auto; }
 
+.case-runs-link { display: inline-block; margin-top: 4px; font-size: 11.5px; }
+tr.case-runs-row > td { padding: 0; border: 0; }
+.case-runs:empty { display: none; }
+.case-runs-body { padding: 8px 10px 10px; background: #fafbfc; border-top: 1px solid var(--border); }
+.case-runs-body h6 { margin: 0 0 4px; font-size: 13px; }
+.case-runs-config + .case-runs-config { margin-top: 10px; }
+table.node-runs th, table.node-runs td { font-size: 12px; padding: 4px 7px; }
+table.node-runs td:first-child { white-space: nowrap; }
+details.run-records { margin: 0; }
+details.run-records summary { cursor: pointer; font-size: 12px; color: var(--accent); white-space: nowrap; }
+table.run-record-table { margin: 6px 0 2px; min-width: 720px; }
+table.run-record-table th, table.run-record-table td { font-size: 11.5px; padding: 3px 6px; }
+table.run-record-table .mono { font-size: 11px; }
+
 .case-filter { margin: 6px 0 8px; }
 .case-filter summary { cursor: pointer; font-size: 12px; color: var(--accent); }
 .case-filter-list { max-height: 160px; overflow: auto; display: flex; flex-wrap: wrap;
   gap: 4px 10px; padding: 6px; border: 1px solid #e3e6ea; border-radius: 6px; margin: 6px 0; }
 .case-filter-list .chip { margin: 0; }
+
+details.repro-details {
+  margin: 4px 0 0; font-size: 12px;
+}
+details.repro-details summary {
+  cursor: pointer; color: var(--muted); font-size: 11.5px;
+}
+details.repro-details summary:hover { color: var(--accent); }
+details.repro-details pre.cmd {
+  margin: 4px 0 6px; font-size: 11.5px; max-width: 720px;
+}
+tr.repro-row td { background: #fafbfc; font-size: 12px; vertical-align: top; }
+tr.repro-row td.metric-name { color: var(--muted); font-size: 11.5px; }

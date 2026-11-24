@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timezone
 
 from .groups import group_configs
+from .scope import effective_scenario_ids, parse_config_ids, parse_source_scenario_ids
 from .scoring import cached_comparison
 
 
@@ -47,8 +48,17 @@ def pk_gap_configs(conn, scenario_id: int, config_id: int | None) -> list[dict]:
     """返回场景内有数据、但与给定配置所在聚合组没有共同 case 的聚合配置。"""
     if not config_id:
         return []
+    scenario = conn.execute("SELECT config_ids FROM scenario WHERE id = ?",
+                            (scenario_id,)).fetchone()
+    selected_config_ids = parse_config_ids(scenario["config_ids"] if scenario else None)
+    config_ph = ",".join("?" * len(selected_config_ids))
+    config_clause = (f" AND r.config_id IN ({config_ph})"
+                     if selected_config_ids else "")
+    scope_ids = effective_scenario_ids(conn, scenario_id)
+    scope_ph = ",".join("?" * len(scope_ids))
     suite_ids = [r["suite_id"] for r in conn.execute(
-        "SELECT suite_id FROM scenario_suite WHERE scenario_id = ?", (scenario_id,)).fetchall()]
+        f"SELECT DISTINCT suite_id FROM scenario_suite"
+        f" WHERE scenario_id IN ({scope_ph})", scope_ids).fetchall()]
     if not suite_ids:
         return []
     ph, params = _in_clause(suite_ids)
@@ -56,7 +66,9 @@ def pk_gap_configs(conn, scenario_id: int, config_id: int | None) -> list[dict]:
         f"SELECT DISTINCT r.config_id AS id, c.name, c.params FROM run r"
         f" JOIN config_set c ON c.id = r.config_id"
         f" WHERE r.suite_id IN ({ph}) AND r.valid = 1 AND r.excluded = 0"
-        f" ORDER BY r.config_id", params).fetchall()
+        f" AND r.scenario_id IN ({scope_ph}){config_clause}"
+        f" ORDER BY r.config_id",
+        (*params, *scope_ids, *selected_config_ids)).fetchall()
     groups = group_configs([dict(r) for r in rows])
     candidate = next((g for g in groups
                       if any(c["id"] == config_id for c in g["configs"])), None)
@@ -77,8 +89,11 @@ def pk_gap_configs(conn, scenario_id: int, config_id: int | None) -> list[dict]:
                     f" WHERE ra.config_id = ? AND rb.config_id = ?"
                     f" AND ra.suite_id IN ({ph}) AND rb.suite_id IN ({ph})"
                     f" AND ra.valid = 1 AND ra.excluded = 0"
-                    f" AND rb.valid = 1 AND rb.excluded = 0 LIMIT 1",
-                    (ca["id"], cb["id"], *params, *params)).fetchone()
+                    f" AND rb.valid = 1 AND rb.excluded = 0"
+                    f" AND ra.scenario_id IN ({scope_ph})"
+                    f" AND rb.scenario_id IN ({scope_ph}) LIMIT 1",
+                    (ca["id"], cb["id"], *params, *params,
+                     *scope_ids, *scope_ids)).fetchone()
                 if common:
                     break
             if common:
@@ -216,9 +231,19 @@ def scenario_detail(conn, scenario_id: int) -> dict | None:
         return None
     s = dict(row)
     s["scoring"] = json.loads(s["scoring"] or "{}")
+    scope_ids = effective_scenario_ids(conn, scenario_id)
+    scope_ph = ",".join("?" * len(scope_ids))
+    s["source_scenario_ids"] = parse_source_scenario_ids(s.get("source_scenario_ids"))
+    s["config_ids"] = parse_config_ids(s.get("config_ids"))
+    s["selected_configs"] = [dict(r) for r in conn.execute(
+        f"SELECT id, name FROM config_set WHERE id IN ({','.join('?' * len(s['config_ids']))})"
+        f" ORDER BY id", s["config_ids"]).fetchall()] if s["config_ids"] else []
+    s["source_scenarios"] = [dict(r) for r in conn.execute(
+        f"SELECT id, name FROM scenario WHERE id IN ({scope_ph})"
+        f" AND id != ? ORDER BY id", (*scope_ids, scenario_id)).fetchall()]
     s["suites"] = [dict(r) for r in conn.execute(
-        "SELECT su.* FROM suite su JOIN scenario_suite ss ON ss.suite_id = su.id"
-        " WHERE ss.scenario_id = ? ORDER BY su.id", (scenario_id,)).fetchall()]
+        "SELECT DISTINCT su.* FROM suite su JOIN scenario_suite ss ON ss.suite_id = su.id"
+        f" WHERE ss.scenario_id IN ({scope_ph}) ORDER BY su.id", scope_ids).fetchall()]
     if s["best_config_id"]:
         cfg = conn.execute("SELECT * FROM config_set WHERE id = ?",
                            (s["best_config_id"],)).fetchone()

@@ -28,6 +28,8 @@ from itertools import combinations
 
 from . import cache
 from .config import DEFAULT_SCORING
+from .repro import resolve_repro
+from .scope import effective_scenario_ids, parse_config_ids
 
 
 def _mean(values: list[float]) -> float:
@@ -269,6 +271,8 @@ def load_comparison(conn, scenario_id: int, suite_id: int | None = None) -> dict
         raise KeyError(f"scenario {scenario_id} 不存在")
     scenario = dict(scenario)
     scoring = scenario_scoring(scenario)
+    model = dict(conn.execute("SELECT * FROM model WHERE id = ?",
+                              (scenario["model_id"],)).fetchone())
     epsilon = float(scoring["epsilon"])
     w_same = float(scoring["w_same"])
     w_adj = float(scoring["w_adj"])
@@ -278,29 +282,42 @@ def load_comparison(conn, scenario_id: int, suite_id: int | None = None) -> dict
 
     metric_defs = {r["key"]: dict(r) for r in conn.execute("SELECT * FROM metric_def").fetchall()}
 
-    suite_sql = ("SELECT s.* FROM suite s JOIN scenario_suite ss ON ss.suite_id = s.id"
-                 " WHERE ss.scenario_id = ?")
-    suite_params: list = [scenario_id]
+    scope_ids = effective_scenario_ids(conn, scenario_id)
+    scope_ph = ",".join("?" * len(scope_ids))
+    selected_config_ids = parse_config_ids(scenario.get("config_ids"))
+    config_ph = ",".join("?" * len(selected_config_ids))
+    config_clause = f" AND config_id IN ({config_ph})" if selected_config_ids else ""
+    suite_sql = ("SELECT DISTINCT s.* FROM suite s"
+                 " JOIN scenario_suite ss ON ss.suite_id = s.id"
+                 f" WHERE ss.scenario_id IN ({scope_ph})")
+    suite_params: list = [*scope_ids]
     if suite_id is not None:
         suite_sql += " AND s.id = ?"
         suite_params.append(suite_id)
     suite_rows = conn.execute(suite_sql + " ORDER BY s.id", suite_params).fetchall()
 
     configs = {}
-    for r in conn.execute("SELECT * FROM config_set WHERE model_id = ?",
-                          (scenario["model_id"],)).fetchall():
+    config_sql = "SELECT * FROM config_set WHERE model_id = ?"
+    config_params: list = [scenario["model_id"]]
+    if selected_config_ids:
+        config_sql += f" AND id IN ({config_ph})"
+        config_params.extend(selected_config_ids)
+    for r in conn.execute(config_sql, config_params).fetchall():
         cfg = dict(r)
         cfg["deploy"] = json.loads(cfg.get("deploy") or "{}")
         configs[cfg["id"]] = cfg
     nodes = {r["id"]: dict(r) for r in conn.execute("SELECT * FROM node").fetchall()}
 
-    # 读取该模型全部有效运行，随后按 suite 的 case 过滤；
-    # 配置归属场景由 run.suite_id → scenario_suite 推导，节点倍率也按 suite 独立估计。
-    run_sql = "SELECT * FROM run WHERE model_id = ? AND valid = 1 AND excluded = 0"
-    run_params: list = [scenario["model_id"]]
+    # 读取该场景及其来源场景的有效运行，再按 suite 的 case 和配置白名单过滤。
+    # 自定义场景通过 source_scenario_ids 聚合多个场景的 run 做横向对比。
+    run_sql = ("SELECT * FROM run WHERE model_id = ? AND valid = 1 AND excluded = 0"
+               f" AND scenario_id IN ({scope_ph}){config_clause}")
+    run_params: list = [scenario["model_id"], *scope_ids, *selected_config_ids]
     res_sql = ("SELECT cr.* FROM case_result cr JOIN run r ON r.id = cr.run_id"
-               " WHERE r.model_id = ? AND r.valid = 1 AND r.excluded = 0")
-    res_params: list = [scenario["model_id"]]
+               " WHERE r.model_id = ? AND r.valid = 1 AND r.excluded = 0"
+               f" AND r.scenario_id IN ({scope_ph})"
+               + (f" AND r.config_id IN ({config_ph})" if selected_config_ids else ""))
+    res_params: list = [scenario["model_id"], *scope_ids, *selected_config_ids]
     runs = conn.execute(run_sql, run_params).fetchall()
     run_by_id = {r["id"]: dict(r) for r in runs}
     results = conn.execute(res_sql, res_params).fetchall()
@@ -322,6 +339,26 @@ def load_comparison(conn, scenario_id: int, suite_id: int | None = None) -> dict
             if value is None:
                 continue
             bucket.setdefault(key, []).append((node_label, float(value), run["id"]))
+
+    # 每个 配置×case 数据点的复现命令：取该数据点最新一次有效 run。
+    repro_by_case: dict = {}
+    for cid, by_case in data.items():
+        for case_id, by_metric in by_case.items():
+            run_ids = sorted({run_id for entries in by_metric.values()
+                              for _, _, run_id in entries})
+            if not run_ids:
+                continue
+            run_id = run_ids[-1]
+            run = run_by_id.get(run_id)
+            case = case_rows.get(case_id)
+            if not run or not case:
+                continue
+            repro_by_case[(cid, case_id)] = {
+                "run_id": run_id,
+                "cmd": resolve_repro(
+                    model["name"], configs.get(run["config_id"], {}),
+                    {**run, "node_label": nodes[run["node_id"]]["label"]}, case),
+            }
 
     # 节点倍率按 suite 独立估计：只用本 suite 的 case 数据，避免跨测试集合借用校正因子。
 
@@ -535,6 +572,8 @@ def load_comparison(conn, scenario_id: int, suite_id: int | None = None) -> dict
                 "cells": cells,
                 "pairwise": pairwise,
                 "configs_with_data": cid_with_data,
+                "repro": {cid: repro_by_case.get((cid, case["id"]))
+                          for cid in cid_with_data},
             })
 
         # 配置总分：对每个对手×case 的 case_score 按 case weight 加权平均
@@ -607,8 +646,6 @@ def load_comparison(conn, scenario_id: int, suite_id: int | None = None) -> dict
             "compared_case_count": len(compared_cases),
         })
 
-    model = dict(conn.execute("SELECT * FROM model WHERE id = ?",
-                              (scenario["model_id"],)).fetchone())
     return {
         "scenario": scenario,
         "model": model,

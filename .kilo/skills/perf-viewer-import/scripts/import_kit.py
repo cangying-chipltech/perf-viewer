@@ -49,6 +49,19 @@ def parse_pairs(items: list[str] | None, label: str) -> dict:
     return out
 
 
+def parse_raw_pairs(items: list[str] | None, label: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in items or []:
+        if "=" not in item:
+            die(f"{label} 需要 K=V 格式: {item}")
+        key, value = item.split("=", 1)
+        key, value = key.strip(), value.strip()
+        if not key:
+            die(f"{label} key 为空: {item}")
+        out[key] = value
+    return out
+
+
 def normalize_image(image: str) -> str:
     if not image:
         return image
@@ -88,6 +101,10 @@ def common_parser(suite_default: str) -> argparse.ArgumentParser:
     p.add_argument("--env", action="append", default=[], help="服务端环境变量 K=V，可重复")
     p.add_argument("--source", default="", help="来源说明，如 profile-service execution id")
     p.add_argument("--notes", default="")
+    p.add_argument("--repro-cmd", default="",
+                   help="run 级复现命令；导入后展示在每个 case 的复现命令中")
+    p.add_argument("--case-repro", action="append", default=[],
+                   help="case 级复现命令 KEY=CMD，可重复；优先于 --repro-cmd 与自动生成")
     p.add_argument("--copy", action="append", default=[], help="额外复制进输出目录的文件/目录")
     return p
 
@@ -113,6 +130,11 @@ def write_payload(args, cases: list[dict], meta: dict) -> Path:
     config = {"name": args.config_name, "params": params}
     if deploy:
         config["deploy"] = deploy
+    case_repro = parse_raw_pairs(args.case_repro, "--case-repro")
+    for case in cases:
+        repro = case_repro.get(case.get("case_key"))
+        if repro:
+            case["repro_cmd"] = repro
     normalized = {
         "model": {"name": args.model, "aliases": args.alias},
         "config": {"name": args.config_name, "params": params},
@@ -123,6 +145,7 @@ def write_payload(args, cases: list[dict], meta: dict) -> Path:
         "valid": True,
         "started_at": args.started_at,
         "ended_at": args.ended_at,
+        "repro_cmd": args.repro_cmd or None,
         "cases": cases,
         "meta": meta,
     }
@@ -138,6 +161,10 @@ def write_payload(args, cases: list[dict], meta: dict) -> Path:
     }
     if args.notes:
         manifest["config"]["notes"] = args.notes
+    if args.repro_cmd:
+        manifest["repro_cmd"] = args.repro_cmd
+    if case_repro:
+        manifest["cases"] = {key: {"repro_cmd": value} for key, value in case_repro.items()}
     if args.scenario_id is not None:
         manifest["scenario_id"] = args.scenario_id
     (out / "normalized.json").write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")

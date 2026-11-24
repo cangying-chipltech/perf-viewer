@@ -38,6 +38,7 @@ class NormalizedCase:
     out_tok: Optional[int] = None
     params: dict[str, Any] = field(default_factory=dict)
     description: str = ""
+    repro_cmd: Optional[str] = None
     meta: dict[str, Any] = field(default_factory=dict)
 
 
@@ -62,6 +63,7 @@ class NormalizedRun:
     started_at: Optional[str] = None
     ended_at: Optional[str] = None
     worker_label: Optional[str] = None
+    repro_cmd: Optional[str] = None
     artifacts: list[NormalizedArtifact] = field(default_factory=list)
     meta: dict[str, Any] = field(default_factory=dict)
 

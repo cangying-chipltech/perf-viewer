@@ -124,6 +124,23 @@
               {% endif %}
             {% endfor %}
           </tr>
+          {% if loop.last or table[loop.index0 + 1].case.id != row.case.id or table[loop.index0 + 1].metric is none %}
+          <tr class="repro-row">
+            <td class="metric-name">复现命令</td>
+            {% for cid in selected.config_ids %}
+              {% set rp = (row.repro or {}).get(cid) %}
+              <td>
+                {% if rp and rp.cmd %}
+                <details class="repro-details">
+                  <summary>查看 · run #{{ rp.run_id }}</summary>
+                  <p><button type="button" class="copy" data-copy="#repro-cmp-{{ row.case.id }}-{{ cid }}" data-label="复制">复制</button></p>
+                  <pre id="repro-cmp-{{ row.case.id }}-{{ cid }}" class="cmd">{{ rp.cmd }}</pre>
+                </details>
+                {% else %}<span class="muted small">—</span>{% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+          {% endif %}
         {% endif %}
       {% endfor %}
       </tbody>

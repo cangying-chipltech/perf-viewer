@@ -1,0 +1,83 @@
+{% if case and configs %}
+<div class="case-runs-body">
+  <h6>节点执行数据：<span class="mono">{{ case.case_key }}</span>
+    {% if case.description %}<span class="muted small">{{ case.description }}</span>{% endif %}</h6>
+  <p class="muted small">节点值为该节点全部有效运行均值；每条节点记录可展开查看具体测试记录（含无效/已剔除）。</p>
+  {% for cfg in configs %}
+  <div class="case-runs-config">
+    {% if configs | length > 1 %}
+    <p class="mono small">配置：{{ cfg.config.name }}</p>
+    {% endif %}
+    <div class="table-wrap">
+    <table class="node-runs">
+      <thead><tr>
+        <th>节点</th><th>记录</th>
+        {% for key in metric_keys %}
+        <th>{{ metric_defs[key].display_name }}
+          <span class="muted small">{{ key }}{% if metric_defs[key].unit %} · {{ metric_defs[key].unit }}{% endif %}</span></th>
+        {% endfor %}
+        <th>测试记录</th>
+      </tr></thead>
+      <tbody>
+      {% for node in cfg.nodes %}
+        <tr>
+          <td class="mono">{{ node.label }}</td>
+          <td class="small">
+            {% if node.valid_count == node.records | length %}{{ node.records | length }}
+            {% else %}{{ node.valid_count }} / {{ node.records | length }}{% endif %}
+          </td>
+          {% for key in metric_keys %}
+          <td>{{ node.means.get(key) | fmt }}</td>
+          {% endfor %}
+          <td>
+            {% if node.records | length > 1 %}
+            <details class="run-records">
+              <summary>展开 {{ node.records | length }} 条记录</summary>
+              <div class="table-wrap">
+              <table class="run-record-table">
+                <thead><tr>
+                  <th>run</th><th>状态</th><th>指标值</th>
+                  <th>n</th><th>err</th><th>开始时间</th><th>worker</th>
+                </tr></thead>
+                <tbody>
+                {% for r in node.records %}
+                  <tr class="{{ 'row-invalid' if not r.valid or r.excluded else '' }}">
+                    <td><a href="/runs/{{ r.id }}">#{{ r.id }}</a></td>
+                    <td>
+                      {% if not r.valid %}<span class="badge invalid">无效</span>{% endif %}
+                      {% if r.excluded %}<span class="badge excluded">已剔除</span>{% endif %}
+                      {% if r.valid and not r.excluded %}<span class="badge valid">有效</span>{% endif %}
+                    </td>
+                    <td class="small">
+                      {% for key in metric_keys %}
+                      <span class="mono">{{ metric_defs[key].display_name }}={{ r.metrics.get(key) | fmt }}</span>{% if not loop.last %} · {% endif %}
+                      {% endfor %}
+                    </td>
+                    <td>{{ r.n_measured if r.n_measured is not none else '—' }}</td>
+                    <td>{{ r.err_count if r.err_count is not none else '—' }}</td>
+                    <td class="small">{{ r.started_at or '—' }}</td>
+                    <td>{{ r.worker_label or '—' }}</td>
+                  </tr>
+                {% endfor %}
+                </tbody>
+              </table>
+              </div>
+            </details>
+            {% else %}
+            {% set r = node.records[0] %}
+            <a href="/runs/{{ r.id }}">#{{ r.id }}</a>
+            {% if not r.valid %}<span class="badge invalid">无效</span>{% endif %}
+            {% if r.excluded %}<span class="badge excluded">已剔除</span>{% endif %}
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">该测试项暂无可展示的节点执行数据。</p>
+{% endif %}

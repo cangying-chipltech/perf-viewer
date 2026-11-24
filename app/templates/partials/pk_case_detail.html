@@ -13,6 +13,20 @@
   </table>
   </div>
 
+  {% if repro_a or repro_b %}
+  <h6>复现命令</h6>
+  {% for label, rp in (('A', repro_a), ('B', repro_b)) %}
+    {% if rp and rp.cmd %}
+    {% set cfg = a if label == 'A' else b %}
+    <details class="repro-details">
+      <summary>{{ label }} = {{ cfg.name if cfg else '—' }} · run #{{ rp.run_id }}</summary>
+      <p><button type="button" class="copy" data-copy="#repro-pk-{{ case.id }}-{{ label }}" data-label="复制">复制</button></p>
+      <pre id="repro-pk-{{ case.id }}-{{ label }}" class="cmd">{{ rp.cmd }}</pre>
+    </details>
+    {% endif %}
+  {% endfor %}
+  {% endif %}
+
   <h6>参数对比：A = {{ a.name if a else '—' }} · B = {{ b.name if b else '—' }}
     <span class="muted small">（点击 A/B 最佳值查看该配置的运行详情）</span></h6>
   <div class="table-wrap">

@@ -64,7 +64,8 @@
     pvInitChart();
     pvInitPkChart();
     const target = e.detail && e.detail.target;
-    if (target && target.id && target.id.indexOf("case-drilldown-") === 0) {
+    if (target && target.id && (target.id.indexOf("case-drilldown-") === 0 ||
+        target.id.indexOf("case-runs-") === 0)) {
       target.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   });
@@ -110,7 +111,7 @@
     table.querySelectorAll("tr[data-case-key]").forEach(function (tr) {
       const show = selected.has(tr.getAttribute("data-case-key"));
       tr.style.display = show ? "" : "none";
-      if (show) visible += 1;
+      if (show && tr.hasAttribute("data-case-main")) visible += 1;
     });
     document.querySelectorAll('[data-case-count][data-target="' + target + '"]')
       .forEach(function (el) { el.textContent = "显示 " + visible + " / " + boxes.length; });
@@ -140,6 +141,11 @@
     for (const el of form.elements) {
       if (!el.name || el.tagName === "BUTTON") continue;
       let v = el.value;
+      if (el.type === "checkbox") {
+        if (!Array.isArray(body[el.name])) body[el.name] = [];
+        if (el.checked) body[el.name].push(Number(el.value));
+        continue;
+      }
       if (el.dataset.json !== undefined) {
         try { v = JSON.parse(v); } catch (err) {
           window.alert("字段 " + el.name + " 不是合法 JSON: " + err.message);
@@ -147,6 +153,8 @@
         }
       } else if (el.dataset.list !== undefined) {
         v = v.split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+      } else if (el.multiple) {
+        v = Array.from(el.selectedOptions).map(function (o) { return Number(o.value); });
       } else if (el.type === "number") {
         v = Number(v);
       } else if (v === "true") { v = true; }

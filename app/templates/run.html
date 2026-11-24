@@ -56,6 +56,20 @@
 </table>
 </div>
 
+<h2>复现命令</h2>
+{% if repro_items %}
+<p class="muted small">仅展示客户端压测命令（backend + case 参数）；导入时提供了显式命令则优先使用。</p>
+{% for item in repro_items %}
+<details class="repro-details">
+  <summary><span class="mono">{{ item.case_key }}</span> 的复现命令</summary>
+  <p><button type="button" class="copy" data-copy="#repro-run-{{ loop.index }}" data-label="复制">复制</button></p>
+  <pre id="repro-run-{{ loop.index }}" class="cmd">{{ item.cmd }}</pre>
+</details>
+{% endfor %}
+{% else %}
+<p class="muted">暂无 case 数据。</p>
+{% endif %}
+
 <h2>产物</h2>
 {% if not artifacts_render %}<p class="muted">无产物。</p>{% endif %}
 {% for item in artifacts_render %}
