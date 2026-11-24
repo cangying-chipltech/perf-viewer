@@ -290,6 +290,18 @@ class TestPartialCoverageAndFallback:
         assert metric["source_rank"] == 2
         assert metric["best"]["value"] == 30
 
+    def test_best_data_hides_cases_with_missing_metrics(self, conn):
+        from app.web import best_data_view
+
+        model, suite, cases = make_catalog(conn, case_keys=("c1", "c2"))
+        sid = make_scenario(conn, model, suite)
+        make_run(conn, model, suite, [cases[0]], "A", {"v": 1}, "n1", [m(10, None)])
+
+        comp = load_comparison(conn, sid)
+        suite_out = comp["suites"][0]
+        view = best_data_view(comp, suite_out["ranking"][0]["config_id"])
+        assert [c["case"]["case_key"] for c in view[0]["cases"]] == ["c1"]
+
 
 class TestPkView:
     def test_disjoint_coverage_has_no_pk(self, conn):

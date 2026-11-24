@@ -631,6 +631,9 @@ def best_data_view(comp: dict, cfg_id: int) -> list[dict]:
         has_focus = any(case_out["cells"].get(cfg_id) for case_out in suite_out["cases"])
         focus_id = cfg_id if has_focus else (
             suite_out.get("recommended_config_id") or (order[0] if order else cfg_id))
+        suite_metric_keys = set()
+        for case_out in suite_out["cases"]:
+            suite_metric_keys.update(case_out.get("metric_keys") or [])
         cases = []
         for case_out in suite_out["cases"]:
             cells = case_out["cells"]
@@ -661,6 +664,9 @@ def best_data_view(comp: dict, cfg_id: int) -> list[dict]:
                     "source_config_name": configs[source_id]["name"],
                     "source_rank": rank_by_id.get(source_id),
                 })
+            if (not metrics or any(metric.get("missing") for metric in metrics)
+                    or {metric["key"] for metric in metrics} != suite_metric_keys):
+                continue
             sources = []
             seen_sources = set()
             source_config_ids: list[int] = []
@@ -691,6 +697,8 @@ def best_data_view(comp: dict, cfg_id: int) -> list[dict]:
                               for cid in source_config_ids if cid in configs
                           ],
                           "missing": not any(not m.get("missing") for m in metrics)})
+        if not cases:
+            continue
         keys: list[str] = []
         for case_view in cases:
             for metric in case_view["metrics"]:
