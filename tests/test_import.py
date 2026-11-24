@@ -265,3 +265,38 @@ class TestCaseConsoleLogImport:
             assert conn.execute(
                 "SELECT COUNT(*) n FROM artifact WHERE title = 'c1/console.log'"
             ).fetchone()["n"] == 1
+
+
+
+class TestRunArchiveArtifacts:
+    def test_archive_evidence_stays_on_the_run(self, tmp_path):
+        # 执行归档（用例日志、启动命令）属于产生它的 run：指定场景时也要挂在 run 上，
+        # 否则 run 详情页看不到、下载不了。
+        with get_db() as conn:
+            from app.entities import ensure_suite, resolve_model
+            model = resolve_model(conn, "cltech/glm53")
+            suite = ensure_suite(conn, "glm53-12case")
+            sid = make_scenario(conn, model, suite)
+        root = stage(tmp_path, "node_details.csv")
+        (root / "server-start" / "exec_1").mkdir(parents=True)
+        (root / "server-start" / "exec_1" / "summary.json").write_text("{}", encoding="utf-8")
+        (root / "benchmark-suite").mkdir()
+        (root / "benchmark-suite" / "notes.txt").write_text("note", encoding="utf-8")
+        (root / "archive.json").write_text("{}", encoding="utf-8")
+        shutil.copyfile(FIXTURES / "probe_threshold1024.json", root / "report.json")
+        manifest = dict(CSV_MANIFEST, scenario_id=sid)
+        report = import_runs(root, manifest)
+        assert report["status"] == "ok"
+        rels = {item["path"] for item in report["artifacts"]}
+        assert {"server-start/exec_1/summary.json", "archive.json"} <= rels
+        with get_db() as conn:
+            run_arts = conn.execute(
+                "SELECT rel_path FROM artifact WHERE run_id IS NOT NULL").fetchall()
+            assert any(row["rel_path"].endswith("server-start/exec_1/summary.json")
+                       for row in run_arts)
+            scen_arts = conn.execute(
+                "SELECT rel_path, run_id FROM artifact WHERE scenario_id = ?", (sid,)).fetchall()
+            # 只有场景级文件没有 run_id；执行归档文件同时带 run_id，run 详情页可见。
+            scenario_only = [row["rel_path"].rsplit("/", 1)[-1]
+                             for row in scen_arts if row["run_id"] is None]
+            assert scenario_only == ["report.json"]

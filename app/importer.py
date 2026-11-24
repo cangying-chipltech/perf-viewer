@@ -170,6 +170,16 @@ CASE_LOG_FIELDS = (("console_log", "console.log"),
                    ("stdout_log", "stdout.log"),
                    ("stderr_log", "stderr.log"))
 
+# 每次执行归档的目录：这些文件只属于产生它们的 run，即使导入指定了场景也挂在
+# run 上，run 详情页才能列出并下载；其它未消费文件仍按场景归档。
+RUN_ARCHIVE_PREFIXES = ("archive.json", "benchmark-suite/", "raw-results/", "server-start/")
+
+
+def _run_archive_file(rel: str) -> bool:
+    normalized = rel.replace("\\", "/")
+    return any(normalized == prefix or normalized.startswith(prefix)
+               for prefix in RUN_ARCHIVE_PREFIXES)
+
 
 def _add_case_logs(run: NormalizedRun, case_manifest: dict) -> None:
     """把 cases[].console_log/stdout_log/stderr_log 落成该 case 的日志产物。
@@ -389,7 +399,8 @@ def import_runs(root: Path, manifest: dict, source: str = "", dry_run: bool = Fa
                 rel = str(path.relative_to(root))
                 if rel in consumed or rel in seen_files:
                     continue
-                scope_run = None if scenario_id is not None else first_run_id
+                scope_run = (first_run_id if scenario_id is None or _run_archive_file(rel)
+                             else None)
                 res = _store_artifact(conn, batch_dir, root, rel, _kind_of(path),
                                       path.name, scope_run, scenario_id, seen_files)
                 if res:

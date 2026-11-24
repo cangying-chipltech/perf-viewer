@@ -89,7 +89,9 @@ python3 $K benchmark-suite ... --deploy-dir ./raw/deploy-exec_71ae8269acbf
 - `--service-url` 默认取 `$PROFILE_SERVICE_URL`，否则 `http://127.0.0.1:18729`；只取 `commands/*.sh` 与 `summary.json`，其它日志不归档。
 - `--execution <id>` 记录本次压测执行 id 到 `archive.json`，便于回溯。
 - 不归档原始用例结果时加 `--no-archive-raw`（只上传指标，目录里不会出现 `benchmark-suite/`、`raw-results/`）。
-- 带 `--scenario-id` 导入时，未被 case 消费的归档文件挂到**场景**下；不带时挂到本次 **run** 下，均在 run/场景详情页可下载。
+- 带 `--scenario-id` 导入时，非归档类的未消费文件挂到**场景**下；归档目录（`archive.json`、`benchmark-suite/`、`raw-results/`、`server-start/`）始终挂到本次 **run**，run 详情页可直接下载。
+- 计划/工作流导入（`perf_viewer.import` 步骤，`perf_viewer.archive: true` 默认开启）也做同样的归档：用例日志、`benchmark-suite/` 摘要与命令、`server-start/<exec_id>/` 启动命令、`archive.json` 一起打成 zip 随导入上传，并在上传前脱敏（`--api-key`、`Authorization: Bearer`、敏感环境变量/JSON 键一律替换为 `***`）。日志来自 profile-service 日志接口，超过 200000 字符时取尾部并在 `archive.json` 的 `truncated_logs` 标出；节点已清理的日志会跳过而不是让导入失败。单次归档上限由导入侧的 `PERF_VIEWER_ARCHIVE_MAX_MB`（默认 64）控制，超出的非 case 日志文件记在 `archive.json` 的 `skipped`，而 payload 引用到的 case 日志始终保留。预览（`dry_run: true`）只上传指标，归档只随正式导入发送。
+
 
 ## 3. 必填信息
 
@@ -127,7 +129,7 @@ manifest/归一化数据至少要有：
 
 run 详情页（`/runs/{id}`）的 case 指标表中，每条测试记录会列出属于该 case 的 `stdout.log`、`stderr.log`、`console.log`，可展开查看并下载；场景页不展示这些文件。推送时按后端选择一种方式：
 
-- **benchmark-suite（evalscope）**：无需额外参数。`import_kit.py benchmark-suite` 会读取 `case-*/case.json` 里的 `id` 映射到 case_key，自动复制每个用例的 `stdout.log`/`stderr.log` 并写入 `stdout_log`/`stderr_log`；同时把全部 case（含失败用例）的日志归档到 `<out>/benchmark-suite/case-*/`（见第 2 节）。
+- **benchmark-suite（evalscope）**：无需额外参数。`import_kit.py benchmark-suite` 会读取 `case-*/case.json` 里的 `id` 映射到 case_key，自动复制每个用例的 `stdout.log`/`stderr.log`/`console.log` 到 `case-logs/<case>/` 并写入 `stdout_log`/`stderr_log`/`console_log`；同时把全部 case（含失败用例）的日志归档到 `<out>/benchmark-suite/case-*/`（见第 2 节）。
 - **guidellm-suite**：无需额外字段，把 `console.log` 放进各 case 目录（与 `meta.json`、`guidellm.json` 同级）即可；适配器会以 `<case_key>/console.log` 自动登记。
 - **generic-json / import_kit**：在 normalized.json 的 `cases[]` 增加 `console_log`、`stdout_log`、`stderr_log` 字段，值为**相对导入根目录**的文件路径：
 
