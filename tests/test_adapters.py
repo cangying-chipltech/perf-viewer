@@ -194,13 +194,17 @@ class TestGenericJson:
             "model_name": "m", "config_name": "c", "config_params": {"a": 1},
             "node_label": "n1", "suite_key": "s",
             "cases": [{"case_key": "k1", "metrics": {"ttft_mean_s": 1.5, "bogus": 9},
-                       "n_measured": 2}],
+                       "n_measured": 2, "console_log": "k1/console.log",
+                       "stdout_log": "k1/stdout.log", "stderr_log": "k1/stderr.log"}],
         }
         (root / "run.json").write_text(json.dumps(data), encoding="utf-8")
         runs = GenericJsonAdapter().parse(root, {})
         assert len(runs) == 1
         assert runs[0].cases[0].metrics["ttft_mean_s"] == 1.5
         assert "bogus" not in runs[0].cases[0].metrics
+        assert runs[0].cases[0].console_log == "k1/console.log"
+        assert runs[0].cases[0].stdout_log == "k1/stdout.log"
+        assert runs[0].cases[0].stderr_log == "k1/stderr.log"
 
     def test_missing_config_rejected(self, tmp_path):
         root = tmp_path / "root"

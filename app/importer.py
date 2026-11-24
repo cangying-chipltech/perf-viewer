@@ -14,7 +14,7 @@ from .adapters.base import as_runs
 from .db import get_db, get_db_dryrun
 from .entities import (ensure_case, ensure_suite, normalize_deploy, register_config,
                        register_node, resolve_model, seed_metric_defs)
-from .normalize import NormalizedRun, kind_of_suffix
+from .normalize import NormalizedArtifact, NormalizedRun, kind_of_suffix
 from .security import redact, redact_cmd
 
 MAX_ZIP_MEMBERS = 20000
@@ -166,6 +166,34 @@ def _kind_of(path: Path) -> str:
     return kind_of_suffix(path.suffix)
 
 
+CASE_LOG_FIELDS = (("console_log", "console.log"),
+                   ("stdout_log", "stdout.log"),
+                   ("stderr_log", "stderr.log"))
+
+
+def _add_case_logs(run: NormalizedRun, case_manifest: dict) -> None:
+    """把 cases[].console_log/stdout_log/stderr_log 落成该 case 的日志产物。
+
+    normalized case 字段优先；也接受 manifest cases.<key>.<field>。
+    路径相对导入根目录，标题统一为 <case_key>/<文件名>，供 run 详情页按 case 展示。
+    """
+    existing = {(a.path, a.title) for a in run.artifacts}
+    for case in run.cases:
+        decl = case_manifest.get(case.case_key) or {}
+        for field, filename in CASE_LOG_FIELDS:
+            raw = getattr(case, field, None) or decl.get(field)
+            if not isinstance(raw, str) or not raw.strip():
+                continue
+            rel = safe_rel_path(raw.strip())
+            title = f"{case.case_key}/{filename}"
+            key = (str(rel), title)
+            if key in existing:
+                continue
+            existing.add(key)
+            run.artifacts.append(NormalizedArtifact(
+                kind=kind_of_suffix(rel.suffix), path=str(rel), title=title))
+
+
 def _store_artifact(conn, batch_dir: Path, root: Path, rel: str, kind: str, title: str,
                     run_id: int | None, scenario_id: int | None, seen: set) -> dict | None:
     rel_path = safe_rel_path(rel)
@@ -294,6 +322,8 @@ def import_runs(root: Path, manifest: dict, source: str = "", dry_run: bool = Fa
                         report["entities"]["cases_created"].append(
                             {"case_key": row["case_key"], "suite": suite["key"]})
                     case_ids.append((row, case))
+
+                _add_case_logs(run, case_manifest)
 
                 if dry_run:
                     conn.execute("RELEASE SAVEPOINT run_sp")

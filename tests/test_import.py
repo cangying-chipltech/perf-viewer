@@ -197,3 +197,71 @@ class TestScenarioArtifacts:
                                      (sid,)).fetchall()
             assert len(scen_arts) == 1
             assert scen_arts[0]["rel_path"].endswith("report.json")
+
+
+class TestCaseConsoleLogImport:
+    def _root(self, tmp_path, case_decl):
+        root = tmp_path / "root"
+        (root / "console-logs" / "c1").mkdir(parents=True)
+        (root / "console-logs" / "c1" / "console.log").write_text("case log", encoding="utf-8")
+        (root / "console-logs" / "c1" / "stdout.log").write_text("stdout", encoding="utf-8")
+        (root / "console-logs" / "c1" / "stderr.log").write_text("stderr", encoding="utf-8")
+        data = {
+            "model_name": "cltech/glm53", "config_name": "cfg",
+            "config_params": {"tp": 8}, "node_label": "n1",
+            "suite_key": "console-suite",
+            "cases": [{"case_key": "c1", "metrics": {"ttft_mean_s": 1.0},
+                       "console_log": "console-logs/c1/console.log",
+                       "stdout_log": "console-logs/c1/stdout.log",
+                       "stderr_log": "console-logs/c1/stderr.log", **case_decl}],
+        }
+        (root / "run.json").write_text(json.dumps(data), encoding="utf-8")
+        return root
+
+    def _manifest(self, sid, cases=None):
+        manifest = {
+            "model": {"name": "cltech/glm53"},
+            "config": {"name": "cfg", "params": {"tp": 8}},
+            "suite_key": "console-suite", "node": "n1", "scenario_id": sid,
+        }
+        if cases:
+            manifest["cases"] = cases
+        return manifest
+
+    def _scenario(self, conn):
+        from app.entities import ensure_suite, resolve_model
+        model = resolve_model(conn, "cltech/glm53")
+        suite = ensure_suite(conn, "console-suite")
+        return make_scenario(conn, model, suite)
+
+    def test_normalized_case_console_log_artifact(self, tmp_path):
+        with get_db() as conn:
+            sid = self._scenario(conn)
+        root = self._root(tmp_path, {})
+        report = import_runs(root, self._manifest(sid))
+        assert report["status"] == "ok"
+        with get_db() as conn:
+            art = conn.execute(
+                "SELECT * FROM artifact WHERE title = 'c1/console.log'").fetchone()
+            assert art is not None and art["run_id"] is not None
+            assert (config.ARTIFACTS_DIR / art["rel_path"]).read_text(
+                encoding="utf-8") == "case log"
+            for title, content in (("c1/stdout.log", "stdout"),
+                                   ("c1/stderr.log", "stderr")):
+                row = conn.execute(
+                    "SELECT * FROM artifact WHERE title = ?", (title,)).fetchone()
+                assert row is not None and row["run_id"] is not None
+                assert (config.ARTIFACTS_DIR / row["rel_path"]).read_text(
+                    encoding="utf-8") == content
+
+    def test_manifest_case_console_log_artifact(self, tmp_path):
+        with get_db() as conn:
+            sid = self._scenario(conn)
+        root = self._root(tmp_path, {"console_log": None})
+        manifest = self._manifest(sid, {"c1": {"console_log": "console-logs/c1/console.log"}})
+        report = import_runs(root, manifest)
+        assert report["status"] == "ok"
+        with get_db() as conn:
+            assert conn.execute(
+                "SELECT COUNT(*) n FROM artifact WHERE title = 'c1/console.log'"
+            ).fetchone()["n"] == 1

@@ -1,8 +1,11 @@
 import json
+import re
 import shutil
+from pathlib import Path
 
 import pytest
 
+from app import config
 from app.db import get_db, init_db
 from app.entities import normalize_deploy, register_config, resolve_model
 from app.importer import ImportError_, import_runs
@@ -351,6 +354,40 @@ class TestScenarioPageDeploy:
         assert "node-a" in html
         assert "展开 2 条记录" in html
         assert 'class="run-record-table"' in html
+
+    def test_run_page_expands_case_logs(self, client):
+        with get_db() as conn:
+            model, suite, cases = make_catalog(
+                conn, suite_key="run-case-logs", case_keys=("c1", "c2"))
+            sid = make_scenario(conn, model, suite, name="run-logs")
+            run_id, _cfg = make_run(conn, model, suite, cases, "cfg", {"x": 1},
+                                    "node-a",
+                                    [{"e2e_mean_s": 1.0}, {"e2e_mean_s": 2.0}])
+            for case_key, name, content in (
+                    ("c1", "stdout.log", "C1 OUT"), ("c2", "stderr.log", "C2 ERR")):
+                rel = Path("logs") / case_key / name
+                path = config.ARTIFACTS_DIR / rel
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+                conn.execute(
+                    "INSERT INTO artifact(run_id, scenario_id, kind, rel_path, title)"
+                    " VALUES(?,?,?,?,?)",
+                    (run_id, None, "log", str(rel), f"{case_key}/{name}"))
+
+        html = client.get(f"/runs/{run_id}").text
+        assert "日志文件" in html
+        assert html.count('class="case-log-file"') == 2
+        assert html.count('class="case-log-toggle"') == 2
+        log_rows = re.findall(r'<tr class="case-log-row".*?</tr>', html, re.S)
+        assert len(log_rows) == 2
+        assert "stdout.log" in log_rows[0] and "C1 OUT" in log_rows[0]
+        assert "C2 ERR" not in log_rows[0]
+        assert "stderr.log" in log_rows[1] and "C2 ERR" in log_rows[1]
+        assert "C1 OUT" not in log_rows[1]
+
+        scenario = client.get(f"/models/{model['name']}/scenarios/{sid}").text
+        assert "case-console-log-link" not in scenario
+        assert "C1 OUT" not in scenario and "C2 ERR" not in scenario
 
     def test_single_config_kept_simple(self, client, tmp_path):
         with get_db() as conn:

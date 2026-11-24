@@ -2,7 +2,8 @@
 
 接受单个对象或对象数组，字段：
 model_name/model{name,aliases}, config_name/config{name,params}, node_label/node,
-suite_key, cases[{case_key,metrics,n_measured,err_count,in_tok,out_tok,params}],
+suite_key, cases[{case_key,metrics,n_measured,err_count,in_tok,out_tok,params,
+console_log,stdout_log,stderr_log}],
 valid, started_at, ended_at, worker_label。
 """
 
@@ -38,6 +39,9 @@ def _from_dict(data: dict, manifest: dict) -> NormalizedRun:
             params=item.get("params") or {},
             description=item.get("description", ""),
             repro_cmd=item.get("repro_cmd") or item.get("repro"),
+            console_log=item.get("console_log"),
+            stdout_log=item.get("stdout_log"),
+            stderr_log=item.get("stderr_log"),
             meta=item.get("meta") or {},
         ))
     run = NormalizedRun(

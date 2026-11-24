@@ -105,6 +105,8 @@ def common_parser(suite_default: str) -> argparse.ArgumentParser:
                    help="run 级复现命令；导入后展示在每个 case 的复现命令中")
     p.add_argument("--case-repro", action="append", default=[],
                    help="case 级复现命令 KEY=CMD，可重复；优先于 --repro-cmd 与自动生成")
+    p.add_argument("--case-console-log", action="append", default=[],
+                   help="case 级 console.log KEY=PATH，可重复；文件会复制进输出目录并在 run 详情页按 case 展示")
     p.add_argument("--copy", action="append", default=[], help="额外复制进输出目录的文件/目录")
     return p
 
@@ -131,10 +133,26 @@ def write_payload(args, cases: list[dict], meta: dict) -> Path:
     if deploy:
         config["deploy"] = deploy
     case_repro = parse_raw_pairs(args.case_repro, "--case-repro")
+    case_console = parse_raw_pairs(args.case_console_log, "--case-console-log")
+    case_decls: dict[str, dict] = {}
     for case in cases:
-        repro = case_repro.get(case.get("case_key"))
+        case_key = case.get("case_key")
+        repro = case_repro.get(case_key)
         if repro:
             case["repro_cmd"] = repro
+            case_decls.setdefault(case_key, {})["repro_cmd"] = repro
+        console_src = case_console.get(case_key)
+        if console_src:
+            src = Path(console_src)
+            if not src.is_file():
+                die(f"--case-console-log 文件不存在: {console_src}")
+            safe_key = str(case_key or "case").replace("/", "_").replace("\\", "_")
+            dest = out / "console-logs" / safe_key / "console.log"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(src, dest)
+            rel = str(dest.relative_to(out))
+            case["console_log"] = rel
+            case_decls.setdefault(case_key, {})["console_log"] = rel
     normalized = {
         "model": {"name": args.model, "aliases": args.alias},
         "config": {"name": args.config_name, "params": params},
@@ -163,8 +181,8 @@ def write_payload(args, cases: list[dict], meta: dict) -> Path:
         manifest["config"]["notes"] = args.notes
     if args.repro_cmd:
         manifest["repro_cmd"] = args.repro_cmd
-    if case_repro:
-        manifest["cases"] = {key: {"repro_cmd": value} for key, value in case_repro.items()}
+    if case_decls:
+        manifest["cases"] = case_decls
     if args.scenario_id is not None:
         manifest["scenario_id"] = args.scenario_id
     (out / "normalized.json").write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -324,10 +342,33 @@ def _bs_case_desc(case: dict) -> str:
             f" · 并发 {case.get('concurrency')} · {case.get('requests')} 请求")
 
 
+CASE_LOG_FILES = (("stdout_log", "stdout.log"), ("stderr_log", "stderr.log"))
+
+
+def _case_dirs_by_key(summary_path: str) -> dict[str, Path]:
+    """benchmark-suite 执行目录中的 case-*/case.json 映射到 case_key。"""
+    root = Path(summary_path).parent
+    out: dict[str, Path] = {}
+    for case_dir in sorted(root.glob("case-*")):
+        meta_path = case_dir / "case.json"
+        if not meta_path.is_file():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        case_key = meta.get("id")
+        if isinstance(case_key, str) and case_key:
+            out[case_key] = case_dir
+    return out
+
+
 def cmd_benchmark_suite(args) -> None:
     summary = load_json(args.summary)
     config = load_json(args.config)
     definitions = {c["id"]: c for c in config.get("cases", []) if "id" in c}
+    case_dirs = _case_dirs_by_key(args.summary)
+    out_root = Path(args.out)
     requests_by_case: dict = {}
     if args.requests:
         try:
@@ -369,7 +410,7 @@ def cmd_benchmark_suite(args) -> None:
         else:
             in_total = int(base.get("input_tokens") or 0) * max(measured, 0)
             out_total = int(base.get("output_tokens") or 0) * max(measured, 0)
-        cases.append({
+        case = {
             "case_key": case_id,
             "metrics": metrics,
             "n_measured": measured,
@@ -379,7 +420,19 @@ def cmd_benchmark_suite(args) -> None:
             "params": {k: v for k, v in base.items() if k != "id"},
             "description": _bs_case_desc(base or item),
             "meta": {"cache_validation": item.get("cache_validation"), "backend": item.get("backend")},
-        })
+        }
+        case_dir = case_dirs.get(case_id)
+        if case_dir:
+            safe_key = str(case_id).replace("/", "_").replace("\\", "_")
+            for field, filename in CASE_LOG_FILES:
+                src = case_dir / filename
+                if not src.is_file():
+                    continue
+                dest = out_root / "case-logs" / safe_key / filename
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(src, dest)
+                case[field] = str(dest.relative_to(out_root))
+        cases.append(case)
     if not cases:
         die("benchmark-suite summary 没有可导入的 success case")
     write_payload(args, cases, {

@@ -39,6 +39,9 @@ class NormalizedCase:
     params: dict[str, Any] = field(default_factory=dict)
     description: str = ""
     repro_cmd: Optional[str] = None
+    console_log: Optional[str] = None
+    stdout_log: Optional[str] = None
+    stderr_log: Optional[str] = None
     meta: dict[str, Any] = field(default_factory=dict)
 
 

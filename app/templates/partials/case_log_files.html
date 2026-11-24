@@ -1,0 +1,18 @@
+{% if logs %}
+<div class="case-log-files">
+  {% for log in logs %}
+  <details class="case-log-file"{% if loop.first %} open{% endif %}>
+    <summary><span class="mono">{{ log.name }}</span>
+      <a href="/api/artifacts/{{ log.id }}?download=true" onclick="event.stopPropagation()">下载</a></summary>
+    {% if log.missing %}
+    <p class="muted small">产物文件缺失，无法读取内容。</p>
+    {% else %}
+    <pre class="case-log-content">{{ log.content }}</pre>
+    <p class="muted small">可拖动窗口右下角调整高度。{% if log.truncated %}仅展示前 {{ preview_limit_kb }} KB，完整内容请下载。{% endif %}</p>
+    {% endif %}
+  </details>
+  {% endfor %}
+</div>
+{% else %}
+<span class="muted small">—</span>
+{% endif %}

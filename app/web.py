@@ -926,6 +926,59 @@ def _scenario_context(conn, scenario_id: int, suite: int | None,
     }
 
 
+CONSOLE_LOG_PREVIEW_LIMIT = 2_000_000
+CASE_LOG_NAMES = {"console.log": 0, "stdout.log": 1, "stderr.log": 2}
+
+
+def _path_matches_case(rel_path: str, title: str | None, case_key: str) -> bool:
+    text = f"{rel_path or ''}/{title or ''}".replace("\\", "/")
+    parts = {part for part in re.split(r"[/\s]+", text.lower()) if part}
+    return case_key.lower() in parts
+
+
+def _run_case_logs(conn, run_id: int, case_keys: list[str]) -> dict[str, list[dict]]:
+    """按 case 归档 run 下的 console.log/stdout.log/stderr.log，供 run 详情页展开。"""
+    out: dict[str, list[dict]] = {}
+    if not run_id or not case_keys:
+        return out
+    rows = conn.execute(
+        "SELECT * FROM artifact WHERE run_id = ? AND kind = 'log' ORDER BY id",
+        (run_id,)).fetchall()
+    for row in rows:
+        name = Path(row["title"] or row["rel_path"]).name.lower()
+        if name not in CASE_LOG_NAMES:
+            continue
+        matched = [key for key in case_keys
+                   if _path_matches_case(row["rel_path"], row["title"], key)]
+        if not matched and len(case_keys) == 1:
+            matched = list(case_keys)
+        if not matched:
+            continue
+        entry = {
+            "id": row["id"], "name": Path(row["title"] or row["rel_path"]).name,
+            "rel_path": row["rel_path"], "title": row["title"],
+            "run_id": row["run_id"],
+        }
+        path = artifact_path(row["rel_path"])
+        if path is None or not path.is_file():
+            entry["missing"] = True
+        else:
+            try:
+                content = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                entry["missing"] = True
+            else:
+                entry["truncated"] = len(content) > CONSOLE_LOG_PREVIEW_LIMIT
+                entry["content"] = content[:CONSOLE_LOG_PREVIEW_LIMIT]
+        for key in matched:
+            bucket = out.setdefault(key, [])
+            if not any(x["rel_path"] == entry["rel_path"] for x in bucket):
+                bucket.append(dict(entry))
+    for bucket in out.values():
+        bucket.sort(key=lambda x: CASE_LOG_NAMES.get(x["name"].lower(), 9))
+    return out
+
+
 def _artifacts_view(scenario: dict) -> tuple[list[dict], list[dict]]:
     artifacts_html = []
     for art in scenario["artifacts"]:
@@ -1317,6 +1370,10 @@ def page_run(request: Request, run_id: int):
             raise HTTPException(404, "run 不存在")
         metric_defs = {r["key"]: dict(r) for r in
                        conn.execute("SELECT * FROM metric_def").fetchall()}
+        logs_by_case = _run_case_logs(
+            conn, run_id, [cr["case_key"] for cr in run["case_results"]])
+        for cr in run["case_results"]:
+            cr["logs"] = logs_by_case.get(cr["case_key"], [])
     artifacts_render = []
     for art in run["artifacts"]:
         path = artifact_path(art["rel_path"])
@@ -1337,6 +1394,7 @@ def page_run(request: Request, run_id: int):
     return templates.TemplateResponse(request, "run.html", {
         "run": run, "metric_defs": metric_defs, "artifacts_render": artifacts_render,
         "manifest_pretty": manifest_pretty, "repro_items": repro_items,
+        "preview_limit_kb": CONSOLE_LOG_PREVIEW_LIMIT // 1000,
     })
 
 

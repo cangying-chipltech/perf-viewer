@@ -37,6 +37,7 @@
     <tr>
       <th>case</th><th>n</th><th>err</th><th>in_tok</th><th>out_tok</th>
       {% for key, md in metric_defs.items() %}<th title="{{ md.key }}">{{ md.display_name }}<br><span class="muted small">{{ md.unit or '' }}</span></th>{% endfor %}
+      <th>日志文件</th>
     </tr>
   </thead>
   <tbody>
@@ -50,7 +51,23 @@
       {% for key in metric_defs %}
         <td>{{ cr.metrics.get(key) | fmt }}</td>
       {% endfor %}
+      <td class="case-log-files">
+        {% if cr.logs %}
+        <button type="button" class="case-log-toggle"
+                data-log-target="#case-log-row-{{ run.id }}-{{ loop.index }}"
+                data-count="{{ cr.logs | length }}">日志（{{ cr.logs | length }}）</button>
+        {% else %}<span class="muted small">—</span>{% endif %}
+      </td>
     </tr>
+    {% if cr.logs %}
+    <tr class="case-log-row" id="case-log-row-{{ run.id }}-{{ loop.index }}" hidden>
+      <td colspan="{{ metric_defs | length + 6 }}">
+        <div class="case-log-panel">
+          {% with logs=cr.logs %}{% include "partials/case_log_files.html" %}{% endwith %}
+        </div>
+      </td>
+    </tr>
+    {% endif %}
   {% endfor %}
   </tbody>
 </table>

@@ -47,6 +47,21 @@
     }
   });
 
+  document.addEventListener("click", function (e) {
+    const btn = e.target.closest("button[data-log-target]");
+    if (!btn) return;
+    const target = document.querySelector(btn.getAttribute("data-log-target"));
+    if (!target) return;
+    if (target.hasAttribute("hidden")) {
+      target.removeAttribute("hidden");
+      btn.textContent = "收起日志";
+      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    } else {
+      target.setAttribute("hidden", "");
+      btn.textContent = "日志（" + (btn.dataset.count || "") + "）";
+    }
+  });
+
   document.addEventListener("DOMContentLoaded", function () {
     const targets = new Set();
     document.querySelectorAll("input[data-case-filter]").forEach(function (box) {

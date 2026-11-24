@@ -59,6 +59,35 @@ manifest/归一化数据至少要有：
 记录单个 case 的命令（优先级最高）。未提供时由 perf-viewer 按 backend 和 case 参数生成客户端压测命令；
 `backend` 识别不出时回退为 benchmark-suite 命令模板。
 
+### case 日志按测试记录展示（console.log / stdout.log / stderr.log）
+
+run 详情页（`/runs/{id}`）的 case 指标表中，每条测试记录会列出属于该 case 的 `stdout.log`、`stderr.log`、`console.log`，可展开查看并下载；场景页不展示这些文件。推送时按后端选择一种方式：
+
+- **benchmark-suite（evalscope）**：把执行目录里的 `case-*/stdout.log`、`case-*/stderr.log` 一并传入即可。`import_kit.py benchmark-suite` 会读取 `case-*/case.json` 里的 `id` 映射到 case_key，自动复制并写入 `stdout_log`/`stderr_log`，无需额外参数。
+- **guidellm-suite**：无需额外字段，把 `console.log` 放进各 case 目录（与 `meta.json`、`guidellm.json` 同级）即可；适配器会以 `<case_key>/console.log` 自动登记。
+- **generic-json / import_kit**：在 normalized.json 的 `cases[]` 增加 `console_log`、`stdout_log`、`stderr_log` 字段，值为**相对导入根目录**的文件路径：
+
+```json
+"cases": [{
+  "case_key": "B_256",
+  "metrics": {"e2e_mean_s": 5.12},
+  "console_log": "B_256/console.log",
+  "stdout_log": "B_256/stdout.log",
+  "stderr_log": "B_256/stderr.log"
+}]
+```
+
+使用 `import_kit.py` 时也可直接指定 console.log 源文件，脚本会复制到输出目录并写好字段：
+
+```bash
+python3 $K benchmark-suite ... \
+  --case-console-log long-64k-cold-256=./raw/long-64k-cold-256/console.log
+```
+
+- manifest 也支持 `cases.<case_key>.console_log` / `stdout_log` / `stderr_log`。
+- 日志路径或标题中的 case_key 决定归属；文件名必须是 `stdout.log`、`stderr.log` 或 `console.log`。
+- 文件必须随本次导入一起上传/位于导入目录内；缺失时对应记录显示文件缺失或不展示该文件。
+
 ### 配置集归一口径
 
 - 服务端配置 = `config.params`（serve 参数 + `image`）+ `config.deploy`。
@@ -299,13 +328,17 @@ python3 $K benchmark-suite \
     "in_tok": 128000, "out_tok": 25600,
     "params": {"max_concurrency": 64, "input_tokens": 64000, "output_tokens": 1024},
     "description": "并发 64 · 输入 64000 · 输出 1024",
-    "repro_cmd": "python3 benchmark_serving.py ...   # 可选：该 case 的复现命令"
+    "repro_cmd": "python3 benchmark_serving.py ...   # 可选：该 case 的复现命令",
+    "console_log": "c64/console.log   # 可选：相对导入根目录，run 详情页按 case 展示",
+    "stdout_log": "c64/stdout.log    # 可选：evalscope / 客户端标准输出",
+    "stderr_log": "c64/stderr.log    # 可选：evalscope / 客户端标准错误"
   }]
 }
 ```
 
 manifest 与 normalized 的 `model/config/suite_key/node` 保持一致；manifest 额外支持 `scenario_id`、
-`config.deploy`、run 级 `repro_cmd` 与 `cases.<case_key>.repro_cmd`（复现命令）。
+`config.deploy`、run 级 `repro_cmd`、`cases.<case_key>.repro_cmd`（复现命令）与
+`cases.<case_key>.console_log` / `stdout_log` / `stderr_log`（该 case 的日志路径）。
 
 ## 6. 常见问题
 
@@ -317,4 +350,5 @@ manifest 与 normalized 的 `model/config/suite_key/node` 保持一致；manifes
 | 指标映射为空 | 检查 summary 字段名；用第 5 节手工 normalized.json |
 | 配置被拆成两套 | 检查 `image` 是否带 registry/`_with_ray`；用 `--image vllm_glm:<tag>` |
 | 失败 case 没导入 | benchmark-suite 默认只导入 success；调试可加 `--include-failed` |
+| 测试记录没有日志展开 | benchmark-suite 保留 `case-*/stdout.log`、`stderr.log` 与 `case.json` 后重新转换；generic-json 补 `cases[].stdout_log` / `stderr_log` / `console_log`，确保文件随本次导入上传 |
 | 想挂报告/产物 | 传 `--scenario-id`，未消费文件会挂到场景 |
