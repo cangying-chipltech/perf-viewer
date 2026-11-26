@@ -246,7 +246,12 @@ table.best-data thead th { white-space: normal; }
 table.best-data td.metric-cell { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .best-data-wrap { overflow-x: auto; }
 
-.case-runs-link { display: inline-block; margin-top: 4px; font-size: 11.5px; }
+.case-runs-link {
+  display: inline-block; margin-top: 4px; font-size: 11.5px; padding: 0;
+  border: 0; background: none; color: var(--accent); cursor: pointer;
+  font-family: inherit; text-align: left;
+}
+.case-runs-link:hover { text-decoration: underline; }
 tr.case-runs-row > td { padding: 0; border: 0; }
 .case-runs:empty { display: none; }
 .case-log-files { min-width: 120px; }

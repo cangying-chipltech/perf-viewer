@@ -107,11 +107,13 @@ class TestReproInPages:
         assert "复现命令" in html
         assert "未记录压测客户端命令" in html
 
-    def test_scenario_best_data_cells_have_repro(self, client, tmp_path):
+    def test_scenario_best_data_hides_repro_and_node_ip(self, client, tmp_path):
         import_runs(tmp_path / "run", _write_run(tmp_path / "run"))
         with get_db() as conn:
             model, suite, _ = make_catalog(conn, model_name="cltech/glm53", suite_key="evalscope", case_keys=())
             sid = make_scenario(conn, model, suite, name="场景")
         html = client.get(f"/models/cltech/glm53/scenarios/{sid}").text
-        assert "repro-best-" in html
-        assert "复现" in html
+        assert "repro-best-" not in html
+        assert "10.0.0.1" not in html
+        assert "data-case-runs-toggle" in html
+        assert 'aria-expanded="false"' in html

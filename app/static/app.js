@@ -47,6 +47,31 @@
     }
   });
 
+  document.addEventListener("click", async function (e) {
+    const btn = e.target.closest("button[data-case-runs-toggle]");
+    if (!btn) return;
+    e.preventDefault();
+    const target = document.querySelector(btn.getAttribute("data-target"));
+    if (!target) return;
+    if (btn.getAttribute("aria-expanded") === "true") {
+      target.innerHTML = "";
+      btn.setAttribute("aria-expanded", "false");
+      btn.textContent = "节点执行数据";
+      return;
+    }
+    try {
+      const resp = await fetch(btn.getAttribute("data-url"), { headers: authHeaders() });
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      target.innerHTML = await resp.text();
+      if (window.htmx && window.htmx.process) window.htmx.process(target);
+      btn.setAttribute("aria-expanded", "true");
+      btn.textContent = "收起节点执行数据";
+      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    } catch (err) {
+      window.alert("加载节点执行数据失败: " + err.message);
+    }
+  });
+
   document.addEventListener("click", function (e) {
     const btn = e.target.closest("button[data-log-target]");
     if (!btn) return;

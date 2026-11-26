@@ -75,8 +75,8 @@
     {% if bd.focus_rank %}（排名 #{{ bd.focus_rank }}）{% endif %}。
     全局最佳配置未参与本套件；其余测试项缺失时回退到本套件排名靠前的配置。</p>
   {% endif %}
-  <p class="muted small">单元格为各指标最佳值；范围、n runs 与覆盖节点显示在单元格内。
-    点击 case 下的「节点执行数据」可展开查看该用例各节点记录。</p>
+  <p class="muted small">单元格为各指标最佳值，范围与 n runs 显示在单元格内。
+    点击 case 下的「节点执行数据」可展开或收起该用例各节点的记录与复现入口。</p>
   <details class="case-filter">
     <summary>case 过滤（{{ bd.cases | length }}）</summary>
     <div class="case-filter-list">
@@ -114,10 +114,11 @@
           </div>
           {% endif %}
           {% if c.source_configs %}
-          <a href="#" class="case-runs-link" title="展开各节点该用例的执行数据"
-             hx-get="/partials/scenarios/{{ scenario_id }}/case_runs?case={{ c.case.id }}{% for sc in c.source_configs %}&config={{ sc.id }}{% endfor %}"
-             hx-target="#case-runs-{{ bd.suite.id }}-{{ c.case.id }}"
-             hx-swap="innerHTML">节点执行数据</a>
+          <button type="button" class="case-runs-link" data-case-runs-toggle
+             title="展开或收起各节点该用例的执行数据"
+             data-url="/partials/scenarios/{{ scenario_id }}/case_runs?case={{ c.case.id }}{% for sc in c.source_configs %}&config={{ sc.id }}{% endfor %}"
+             data-target="#case-runs-{{ bd.suite.id }}-{{ c.case.id }}"
+             aria-expanded="false">节点执行数据</button>
           {% endif %}
         </th>
         {% for mk in bd.metric_keys %}
@@ -127,15 +128,8 @@
           <span class="muted small">缺少数据</span>
           {% else %}
           <span class="mono"><strong>{{ m.best.value | fmt }}</strong>{% if m.fallback %}<sup>*</sup>{% endif %}</span>
-          <div class="muted small">[{{ m.best.min | fmt }}, {{ m.best.max | fmt }}] · {{ m.best.n_runs }} runs{% if m.same %} · {% for node in m.same %}{{ node }}{% if not loop.last %}、{% endif %}{% endfor %}{% endif %}
+          <div class="muted small">[{{ m.best.min | fmt }}, {{ m.best.max | fmt }}] · {{ m.best.n_runs }} runs
           </div>
-          {% if m.repro_show and m.repro and m.repro.cmd %}
-          <details class="repro-details">
-            <summary>复现</summary>
-            <p><button type="button" class="copy" data-copy="#repro-best-{{ bd.suite.id }}-{{ c.case.id }}-{{ mk.key }}" data-label="复制">复制</button></p>
-            <pre id="repro-best-{{ bd.suite.id }}-{{ c.case.id }}-{{ mk.key }}" class="cmd">{{ m.repro.cmd }}</pre>
-          </details>
-          {% endif %}
           {% endif %}
         </td>
         {% endfor %}
