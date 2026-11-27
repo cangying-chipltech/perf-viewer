@@ -525,19 +525,28 @@ def cmd_evalscope(args) -> None:
         if value is None:
             return None
         return value if args.time_unit == "ms" else value * 1000.0
-    n = pick(raw, ["TotalRequests", "num_requests", "completed", "request_count", "Number of requests"])
+    n = pick(raw, ["Success Requests", "SuccessRequests", "TotalRequests", "num_requests",
+                   "completed", "request_count", "Number of requests"])
+    ttft_ms = pick(raw, ["TTFT (ms)"])
+    tpot_ms = pick(raw, ["TPOT (ms)"])
+    itl_ms = pick(raw, ["ITL (ms)"])
+    e2e_s = pick(raw, ["Avg Latency (s)"])
     metrics = clean_metrics({
-        "e2e_mean_s": seconds(pick(raw, ["AverageLatency", "AverageE2E", "mean_e2e", "e2e_mean",
-                                         "AverageE2ELatency"])),
+        "e2e_mean_s": e2e_s if e2e_s is not None else seconds(
+            pick(raw, ["AverageLatency", "AverageE2E", "mean_e2e", "e2e_mean",
+                       "AverageE2ELatency"])),
         "e2e_p99_s": seconds(pick(raw, ["P99Latency", "P99E2E", "e2e_p99"])),
-        "ttft_mean_s": seconds(pick(raw, ["AverageTTFT", "mean_ttft", "ttft_mean", "avg_ttft"])),
+        "ttft_mean_s": (ttft_ms / 1000.0) if ttft_ms is not None else seconds(
+            pick(raw, ["AverageTTFT", "mean_ttft", "ttft_mean", "avg_ttft"])),
         "ttft_p99_s": seconds(pick(raw, ["P99TTFT", "p99_ttft", "ttft_p99"])),
-        "tpot_mean_ms": millis(pick(raw, ["AverageTPOT", "mean_tpot", "tpot_mean"])),
+        "tpot_mean_ms": tpot_ms if tpot_ms is not None else millis(
+            pick(raw, ["AverageTPOT", "mean_tpot", "tpot_mean"])),
         "tpot_p99_ms": millis(pick(raw, ["P99TPOT", "p99_tpot"])),
-        "itl_mean_ms": millis(pick(raw, ["AverageITL", "mean_itl", "itl_mean"])),
+        "itl_mean_ms": itl_ms if itl_ms is not None else millis(
+            pick(raw, ["AverageITL", "mean_itl", "itl_mean"])),
         "itl_p99_ms": millis(pick(raw, ["P99ITL", "p99_itl"])),
-        "out_tps": pick(raw, ["AverageTPS", "OutputTokenThroughput", "output_throughput",
-                              "OutputTPS", "AverageOutputTPS"]),
+        "out_tps": pick(raw, ["Output Throughput (tok/s)", "AverageTPS", "OutputTokenThroughput",
+                              "output_throughput", "OutputTPS", "AverageOutputTPS"]),
     })
     if not metrics:
         die("evalscope 指标映射为空。可用字段: " + ", ".join(sorted(raw)[:30]))
@@ -547,9 +556,13 @@ def cmd_evalscope(args) -> None:
         "case_key": case_key,
         "metrics": metrics,
         "n_measured": n,
-        "err_count": pick(raw, ["FailedRequests", "failed", "errors"]),
-        "in_tok": pick(raw, ["TotalInputTokens", "total_input_tokens", "InputTokens"]),
-        "out_tok": pick(raw, ["TotalOutputTokens", "total_output_tokens", "OutputTokens"]),
+        "err_count": pick(raw, ["Failed Requests", "FailedRequests", "failed", "errors"]),
+        "in_tok": (int(pick(raw, ["Avg Input Tokens"]) * n)
+                   if pick(raw, ["Avg Input Tokens"]) is not None and n else
+                   pick(raw, ["TotalInputTokens", "total_input_tokens", "InputTokens"])),
+        "out_tok": (int(pick(raw, ["Avg Output Tokens"]) * n)
+                    if pick(raw, ["Avg Output Tokens"]) is not None and n else
+                    pick(raw, ["TotalOutputTokens", "total_output_tokens", "OutputTokens"])),
         "params": parse_pairs(args.case_param, "--case-param"),
         "description": args.description or "",
         "meta": {},

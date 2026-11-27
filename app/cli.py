@@ -85,6 +85,10 @@ def cmd_import(args) -> int:
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         print(f"导入失败 HTTP {exc.code}: {detail}", file=sys.stderr)
+        if exc.code == 401:
+            print("提示：未提供 token；请 export PERF_VIEWER_TOKEN=<目标环境 token>", file=sys.stderr)
+        elif exc.code == 403:
+            print("提示：token 与目标环境不匹配；请确认 PERF_VIEWER_TOKEN 是目标环境的 token", file=sys.stderr)
         return 1
     except urllib.error.URLError as exc:
         print(f"无法连接 {base_url}: {exc.reason}", file=sys.stderr)
