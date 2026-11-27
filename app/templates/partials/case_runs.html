@@ -13,8 +13,7 @@
       <thead><tr>
         <th>节点</th><th>记录</th>
         {% for key in metric_keys %}
-        <th>{{ metric_defs[key].display_name }}
-          <span class="muted small">{{ key }}{% if metric_defs[key].unit %} · {{ metric_defs[key].unit }}{% endif %}</span></th>
+        <th>{{ metric_defs[key].display_name }}{% if metric_defs[key].unit %} <span class="muted small">· {{ metric_defs[key].unit }}</span>{% endif %}</th>
         {% endfor %}
         <th>测试记录</th>
       </tr></thead>

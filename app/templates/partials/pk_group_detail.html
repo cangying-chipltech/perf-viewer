@@ -1,9 +1,9 @@
 <div id="pk-detail">
 {% if pk %}
-  <h4>跨组 PK（各组 Top 变体）：<span class="mono">{{ pk.a.name }}</span>
-    vs <span class="mono">{{ pk.b.name }}</span></h4>
-  <p class="muted small">A 组内 Top：<span class="mono">{{ pk.top_a.name }}</span>；
-    B 组内 Top：<span class="mono">{{ pk.top_b.name }}</span>。</p>
+  <h4>跨组 PK（各组 Top 变体）：<span class="mono">{{ pk.top_a.name }}</span>
+    vs <span class="mono">{{ pk.top_b.name }}</span></h4>
+  <p class="muted small">A 聚合组：<span class="mono">{{ pk.a.name }}</span>；
+    B 聚合组：<span class="mono">{{ pk.b.name }}</span>。</p>
   {% include "partials/pk_detail_body.html" %}
 
   <h5>变体差异 PK 矩阵（仅参考，不参与跨组判定）</h5>

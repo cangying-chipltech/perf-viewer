@@ -269,6 +269,8 @@ class TestScenarioPageDeploy:
         assert "最佳值" in html
         assert "节点执行数据" in html
         assert 'class="case-runs-link"' in html
+        assert "weight=" not in html
+        assert "data-case-filter" in html
         assert 'href="/runs/' not in html
         assert "模型环境变量" in html
         assert "export VLLM_DLC_INDEX_TOPK=256" in html

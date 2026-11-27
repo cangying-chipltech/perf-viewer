@@ -9,19 +9,28 @@
 </p>
 
 <h2 id="aggregate-pk">核心配置（聚合）PK</h2>
-{% if group_tops and has_group_variants %}
-<h3>组内 PK · 选出 Top 变体</h3>
-<p class="muted small">每个聚合配置先在组内两两 PK 出 Top 变体，再由各组 Top 参与跨组 PK。</p>
+{% if group_tops %}
+<h3>聚合配置与 Top 变体</h3>
+<p class="muted small">核心参数相同的配置归入同一聚合组；跨组 PK 使用各组 Top 变体。只有一个变体时，该变体就是 Top。</p>
 <div class="table-wrap">
 <table class="pk-matrix">
   <thead>
-    <tr><th>聚合配置</th><th>变体数</th><th>组内 Top</th><th>组内对比</th><th>组内明细</th></tr>
+    <tr><th>聚合配置</th><th>变体数</th><th>包含配置</th><th>组内 Top</th><th>组内对比</th><th>组内明细</th></tr>
   </thead>
   <tbody>
   {% for item in group_tops %}
     <tr>
       <th class="mono">{{ item.group.label }}</th>
       <td>{{ item.variants | length }}</td>
+      <td class="group-members">
+        {% if item.variants | length <= 2 %}
+          {% for v in item.variants %}<div class="mono small">{{ v.name }}</div>{% endfor %}
+        {% else %}
+          <details><summary class="small">{{ item.variants | length }} 个配置</summary>
+            {% for v in item.variants %}<div class="mono small">{{ v.name }}</div>{% endfor %}
+          </details>
+        {% endif %}
+      </td>
       <td class="mono">{{ item.top.name }}</td>
       <td>
         {% if item.variants | length < 2 %}
@@ -58,8 +67,9 @@
         {% if g.configs | length > 1 %}
         <a href="#" class="pk-cell" title="查看该聚合配置的组内变体 PK 矩阵"
            hx-get="/partials/scenarios/{{ scenario.id }}/pk_group_inner?g={{ g.id }}"
-           hx-target="#pk-detail" hx-swap="outerHTML">{{ g.label }}<span class="muted small">（{{ g.configs | length }} 变体 · Top: {{ group_matrix.top_names[g.id] }}）</span></a>
+           hx-target="#pk-detail" hx-swap="outerHTML">{{ g.label }}<span class="muted small">（{{ g.configs | length }} 变体）</span></a>
         {% else %}{{ g.label }}{% endif %}
+        <div class="muted small">Top: {{ group_matrix.top_names[g.id] }}</div>
       </th>
       {% endfor %}
     </tr>
@@ -72,8 +82,9 @@
         {% if row.group.configs | length > 1 %}
         <a href="#" class="pk-cell" title="查看该聚合配置的组内变体 PK 矩阵"
            hx-get="/partials/scenarios/{{ scenario.id }}/pk_group_inner?g={{ row.group.id }}"
-           hx-target="#pk-detail" hx-swap="outerHTML">{{ row.group.label }}<span class="muted small">（{{ row.group.configs | length }} 变体 · Top: {{ group_matrix.top_names[row.group.id] }}）</span></a>
+           hx-target="#pk-detail" hx-swap="outerHTML">{{ row.group.label }}<span class="muted small">（{{ row.group.configs | length }} 变体）</span></a>
         {% else %}{{ row.group.label }}{% endif %}
+        <div class="muted small">Top: {{ group_matrix.top_names[row.group.id] }}</div>
       </th>
       {% for cell in row.cells %}
         {% if cell.lower %}

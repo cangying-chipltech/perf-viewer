@@ -92,7 +92,10 @@
     document.querySelectorAll("input[data-case-filter]").forEach(function (box) {
       targets.add(box.getAttribute("data-target"));
     });
-    targets.forEach(applyCaseFilter);
+    targets.forEach(function (target) {
+      restoreCaseFilter(target);
+      applyCaseFilter(target);
+    });
   });
 
   document.addEventListener("htmx:configRequest", function (e) {
@@ -140,6 +143,35 @@
     }
   });
 
+  function caseFilterKey(target) {
+    return "pv_case_filter:" + location.pathname + ":" + target;
+  }
+
+  function caseFilterBoxes(target) {
+    return Array.from(document.querySelectorAll(
+      'input[data-case-filter][data-target="' + target + '"]'));
+  }
+
+  function restoreCaseFilter(target) {
+    let raw;
+    try { raw = localStorage.getItem(caseFilterKey(target)); } catch (err) { return; }
+    if (raw === null) return;
+    let unchecked;
+    try { unchecked = new Set(JSON.parse(raw) || []); } catch (err) { return; }
+    caseFilterBoxes(target).forEach(function (box) {
+      box.checked = !unchecked.has(box.value);
+    });
+  }
+
+  function saveCaseFilter(target) {
+    const unchecked = caseFilterBoxes(target)
+      .filter(function (box) { return !box.checked; })
+      .map(function (box) { return box.value; });
+    try {
+      localStorage.setItem(caseFilterKey(target), JSON.stringify(unchecked));
+    } catch (err) {}
+  }
+
   function applyCaseFilter(target) {
     const table = document.querySelector(target);
     if (!table) return;
@@ -159,7 +191,10 @@
 
   document.addEventListener("change", function (e) {
     const box = e.target.closest("input[data-case-filter]");
-    if (box) applyCaseFilter(box.getAttribute("data-target"));
+    if (!box) return;
+    const target = box.getAttribute("data-target");
+    saveCaseFilter(target);
+    applyCaseFilter(target);
   });
 
   document.addEventListener("click", function (e) {
@@ -169,6 +204,7 @@
     const checked = btn.getAttribute("data-case-bulk") === "all";
     document.querySelectorAll('input[data-case-filter][data-target="' + target + '"]')
       .forEach(function (box) { box.checked = checked; });
+    saveCaseFilter(target);
     applyCaseFilter(target);
   });
 

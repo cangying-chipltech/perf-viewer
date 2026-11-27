@@ -210,6 +210,8 @@ tr.deploy-cmp-row th { min-width: 120px; }
 table.pk-matrix th, table.pk-matrix td { font-size: 12px; border: 1px solid #e3e6ea; padding: 6px 8px; }
 table.pk-matrix td.cell a { color: inherit; text-decoration: none; }
 table.pk-matrix td.self { background: #f6f7f9; color: #999; }
+table.pk-matrix td.group-members { max-width: 320px; }
+table.pk-matrix td.group-members summary { cursor: pointer; }
 
 table.pk-matrix td.stair-empty { background: repeating-linear-gradient(45deg, #fafbfc, #fafbfc 6px, #f1f3f5 6px, #f1f3f5 12px); border-color: #eef0f2; }
 a.pk-cell { display: block; color: inherit; text-decoration: none; }
@@ -232,7 +234,7 @@ table.best-data td.metric-cell { min-width: 130px; white-space: nowrap; vertical
 table.best-data { font-size: 12px; }
 table.best-data th, table.best-data td { padding: 4px 6px; }
 table.best-data thead th { position: sticky; top: 0; z-index: 2; background: #fff;
-  box-shadow: 0 1px 0 #e3e6ea; }
+  border-bottom: 2px solid #c9d1d9; box-shadow: 0 1px 0 #e3e6ea; }
 table.best-data th.case-cell { position: sticky; left: 0; z-index: 1; background: #fff;
   min-width: 180px; max-width: 260px; }
 table.best-data thead th.case-cell { z-index: 3; }
@@ -241,7 +243,10 @@ table.best-data .muted.small { font-size: 10.5px; line-height: 1.25; }
 
 /* 最佳数据表：按页面宽度自适应，避免横向滚动 */
 table.best-data { width: 100%; table-layout: fixed; font-size: 11.5px; }
-table.best-data th.case-cell { width: 150px; min-width: 0; max-width: 150px; }
+table.best-data th.case-cell { width: 180px; min-width: 0; max-width: 180px; line-height: 1.35; }
+table.best-data th.case-cell .case-key {
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 table.best-data thead th { white-space: normal; }
 table.best-data td.metric-cell { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .best-data-wrap { overflow-x: auto; }

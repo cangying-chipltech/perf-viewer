@@ -96,18 +96,14 @@
   <table class="best-data" id="best-data-{{ bd.suite.id }}">
     <thead><tr><th class="case-cell">case</th>
       {% for mk in bd.metric_keys %}
-      <th>{{ mk.def.display_name }}
-        <span class="muted small">{{ mk.key }}{% if mk.def.unit %} · {{ mk.def.unit }}{% endif %} ·
-          {{ '越低越好' if mk.def.direction == 'lower' else '越高越好' }}</span></th>
+      <th>{{ mk.def.display_name }}{% if mk.def.unit %} <span class="muted small">· {{ mk.def.unit }}</span>{% endif %}</th>
       {% endfor %}
     </tr></thead>
     <tbody>
     {% for c in bd.cases %}
       <tr data-case-key="{{ c.case.case_key }}" data-case-main>
         <th class="case-cell">
-          <strong class="mono">{{ c.case.case_key }}</strong>
-          <div class="muted small">{{ c.case.description or '' }}</div>
-          <div class="muted small">weight={{ c.case.weight }}</div>
+          <strong class="mono case-key" title="{{ c.case.case_key }}">{{ c.case.case_key }}</strong>
           {% if c.fallback_sources %}
           <div class="muted small">* 回退来源：
             {% for src in c.fallback_sources %}{% if src.rank %}#{{ src.rank }} {% endif %}{{ src.name }}{% if not loop.last %}、{% endif %}{% endfor %}
