@@ -177,9 +177,14 @@ perf-viewer import <dir|zip> --manifest m.json [--dry-run] [--base-url URL] [--t
 perf-viewer seed [--assets-dir DIR]
 perf-viewer serve [--host HOST] [--port PORT]
 perf-viewer audit [--json]
+perf-viewer-import --config scenario.yaml [--dry-run|--apply]
 ```
 
 `import` 将目录打包为 zip 调用 HTTP API；`--base-url/--token` 缺省从 `PERF_VIEWER_BASE_URL/PERF_VIEWER_TOKEN` 读取。
+
+`perf-viewer-import` 读取场景 YAML（最小配置：`model.name`、`scenario.name`、`client.result_dir`、`server.node`、`server.deploy_dir`），自动完成：
+部署命令/环境变量解析、`config.params` 反向提取、多个 case 合并为一个 run、预热附件归档、导入后把 suite 关联到场景。
+示例配置：`model/scenario/client.result_dir/server.deploy_dir`，详见需求文档中的 EvalScope 示例。
 
 `audit` 逐 run 比较它**导入时记录**的部署（`run.manifest.import_manifest.config.deploy`）与所属配置集当前展示的 `deploy`，发现不一致时退出码为 1。这类不一致只可能来自早期版本：那时配置指纹只看 params，相同 params、不同 serve 命令的导入会命中同一配置集，后一次导入再把 `deploy` 覆盖掉，页面就会把旧 run 展示成它没执行过的命令。读接口 `GET /api/deploy-audit` 返回同样内容，对比页也会给出提示。
 
